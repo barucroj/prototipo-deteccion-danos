@@ -1,0 +1,26 @@
+# Prototipo de Detección de Daños Vehiculares
+
+Basado en Redes Neuronales Siamesas y Deep Learning
+
+## Setup
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Estructura
+- `src/` - Código fuente
+- `data/` - Datasets
+- `tests/` - Tests
+- `notebooks/` - Exploración
+
+## Roadmap
+- Sprint 1: Preprocesamiento
+- Sprint 2: Segmentación
+- Sprint 3: Entrenamiento
+- Sprint 4: Frontend
+- Sprint 5: Testing
+
+## Datasets
+- CarDD: https://github.com/Bhavan2194/CarDD_Dataset
