@@ -1,3 +1,4 @@
+.gitignore
 venv/
 __pycache__/
 *.pyc
@@ -12,3 +13,5 @@ models/checkpoints/
 *.log
 .pytest_cache/
 htmlcov/
+CLAUDE.md
+prototipo_deteccion_danos.egg-info
