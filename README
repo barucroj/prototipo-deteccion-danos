@@ -24,3 +24,8 @@ pip install -r requirements.txt
 
 ## Datasets
 - CarDD: https://github.com/Bhavan2194/CarDD_Dataset
+        https://github.com/CarDD-USTC/CarDD-USTC.github.io
+        
+- Car Detection : https://universe.roboflow.com/lidia-shishina-bijxk/car-parts-segmentation-tck28/dataset/4
+
+- Car-parts-segmentation: https://github.com/dsmlr/Car-Parts-Segmentation/tree/master 
