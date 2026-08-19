@@ -1,5 +1,6 @@
 .gitignore
 venv/
+venv_cuda/
 __pycache__/
 *.pyc
 .DS_Store

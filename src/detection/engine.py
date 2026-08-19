@@ -13,6 +13,7 @@ a benchmark comparable to published COCO mAP figures.
 from collections import defaultdict
 
 import torch
+from tqdm import tqdm
 from torchvision.ops import box_iou
 
 
@@ -22,7 +23,8 @@ def train_one_epoch(model, optimizer, data_loader, device):
     total_loss = 0.0
     num_batches = 0
 
-    for images, targets in data_loader:
+    pbar = tqdm(data_loader, desc="Training", leave=True, unit="batch")
+    for images, targets in pbar:
         images = [img.to(device) for img in images]
         targets = [{k: v.to(device) if torch.is_tensor(v) else v for k, v in t.items()} for t in targets]
 
@@ -35,6 +37,7 @@ def train_one_epoch(model, optimizer, data_loader, device):
 
         total_loss += loss.item()
         num_batches += 1
+        pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
     return total_loss / max(num_batches, 1)
 
@@ -68,8 +71,10 @@ def evaluate(model, data_loader, device, iou_threshold: float = 0.5, score_thres
     detections_by_class = defaultdict(list)  # label -> [(score, is_true_positive), ...]
     num_ground_truth_by_class = defaultdict(int)
 
-    for images, targets in data_loader:
+    pbar = tqdm(data_loader, desc="Evaluating", leave=True, unit="batch")
+    for images, targets in pbar:
         images = [img.to(device) for img in images]
+        targets = [{k: v.to(device) if torch.is_tensor(v) else v for k, v in t.items()} for t in targets]
         outputs = model(images)
 
         for target, output in zip(targets, outputs):
