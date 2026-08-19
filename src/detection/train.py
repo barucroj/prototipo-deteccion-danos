@@ -13,9 +13,11 @@ loss/mAP history) to ``--output``.
 import argparse
 import json
 import os
+import time
 
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from src.detection.dataset import CarPartsDetectionDataset, collate_fn
 from src.detection.engine import evaluate, train_one_epoch
@@ -82,8 +84,11 @@ def main():
         collate_fn=collate_fn,
     )
 
-    print(f"Train images: {len(train_dataset)}  Valid images: {len(valid_dataset)}  "
-          f"Classes (incl. background): {train_dataset.num_classes}  Device: {device}")
+    print(f"\n{'='*80}")
+    print(f"Train images: {len(train_dataset)}  |  Valid images: {len(valid_dataset)}")
+    print(f"Classes: {train_dataset.num_classes}  |  Device: {device}")
+    print(f"Epochs: {args.epochs}  |  Batch size: {args.batch_size}  |  LR: {args.lr}")
+    print(f"{'='*80}\n")
 
     model = build_model(num_classes=train_dataset.num_classes, pretrained=True)
     model.to(device)
@@ -93,12 +98,25 @@ def main():
 
     history = []
     best_map = -1.0
+    start_time = time.time()
 
     for epoch in range(1, args.epochs + 1):
+        epoch_start = time.time()
+
+        print(f"\n[Epoch {epoch}/{args.epochs}]")
         train_loss = train_one_epoch(model, optimizer, train_loader, device)
         val_map, _ = evaluate(model, valid_loader, device)
 
-        print(f"Epoch {epoch}/{args.epochs}  train_loss={train_loss:.4f}  val_mAP@0.5={val_map:.4f}")
+        epoch_time = time.time() - epoch_start
+        elapsed = time.time() - start_time
+        eta_seconds = (elapsed / epoch) * (args.epochs - epoch)
+
+        is_best = val_map > best_map
+        status = " ⭐ NEW BEST!" if is_best else ""
+
+        print(f"\n  Loss: {train_loss:.4f}  |  mAP@0.5: {val_map:.4f}{status}")
+        print(f"  Time: {epoch_time:.1f}s  |  Elapsed: {int(elapsed)}s  |  ETA: {int(eta_seconds)}s\n")
+
         history.append({"epoch": epoch, "train_loss": train_loss, "val_map50": val_map})
 
         torch.save(
@@ -106,7 +124,7 @@ def main():
              "categories": train_dataset.categories, "epoch": epoch},
             os.path.join(args.output, "last_model.pth"),
         )
-        if val_map > best_map:
+        if is_best:
             best_map = val_map
             torch.save(
                 {"model_state_dict": model.state_dict(), "num_classes": train_dataset.num_classes,
@@ -117,7 +135,13 @@ def main():
         with open(os.path.join(args.output, "metrics.json"), "w") as f:
             json.dump(history, f, indent=2)
 
-    print(f"Done. Best val mAP@0.5 = {best_map:.4f}. Checkpoints saved to {args.output}")
+    total_time = time.time() - start_time
+    print(f"\n{'='*80}")
+    print(f"✓ Training complete!")
+    print(f"  Best val mAP@0.5: {best_map:.4f}")
+    print(f"  Total time: {int(total_time)}s ({int(total_time/60)}m)")
+    print(f"  Checkpoints saved to: {args.output}")
+    print(f"{'='*80}\n")
 
 
 if __name__ == "__main__":
