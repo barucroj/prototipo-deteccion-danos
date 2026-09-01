@@ -1,39 +1,63 @@
-"""Training and evaluation loops for the car-parts object detector.
+"""Training and evaluation loops, shared by both detectors.
 
-The evaluation metric is a from-scratch mAP@0.5 (greedy IoU matching per
-class, VOC-style all-points interpolated average precision). It is a
-simplified stand-in for the standard COCO mAP (which averages over IoU
-thresholds 0.5:0.95 via ``pycocotools``): ``pycocotools`` needs a C
-extension build and isn't installed in this project's environment (see
-CLAUDE.md environment notes), so this avoids adding a fragile dependency.
-Treat the numbers as directionally useful for comparing checkpoints, not as
-a benchmark comparable to published COCO mAP figures.
+The evaluation metric here is a from-scratch mAP@0.5 (greedy IoU matching
+per class, VOC-style all-points interpolated average precision). It is a
+fallback, kept only for environments where ``pycocotools`` cannot be
+installed; the standard COCO AP in :mod:`src.detection.common.coco_eval` is
+the metric to report. Treat these numbers as directionally useful for
+comparing checkpoints, never as comparable to published COCO mAP figures.
+
+The metric is computed on **boxes** for both detectors, including the
+mask-producing damage model — mask mAP would need the same matching redone on
+mask IoU and is not implemented.
 """
+
+from __future__ import annotations
 
 from collections import defaultdict
 
 import torch
-from tqdm import tqdm
 from torchvision.ops import box_iou
+from tqdm import tqdm
 
 
-def train_one_epoch(model, optimizer, data_loader, device):
-    """Runs one training epoch. Returns the mean total loss across batches."""
+def train_one_epoch(model, optimizer, data_loader, device, scaler=None, max_norm: float = None):
+    """Runs one training epoch. Returns the mean total loss across batches.
+
+    Args:
+        scaler: Optional ``torch.amp.GradScaler``. When given, the forward
+            pass runs under autocast — roughly halves activation memory,
+            which is what makes Mask R-CNN on ~1000px CarDD images fit in the
+            6 GB of the development GPU.
+        max_norm: Optional gradient-norm clipping threshold.
+    """
     model.train()
     total_loss = 0.0
     num_batches = 0
+    use_amp = scaler is not None
 
     pbar = tqdm(data_loader, desc="Training", leave=True, unit="batch")
     for images, targets in pbar:
         images = [img.to(device) for img in images]
         targets = [{k: v.to(device) if torch.is_tensor(v) else v for k, v in t.items()} for t in targets]
 
-        loss_dict = model(images, targets)
-        loss = sum(loss_dict.values())
+        with torch.amp.autocast(device.type, enabled=use_amp):
+            loss_dict = model(images, targets)
+            loss = sum(loss_dict.values())
 
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if use_amp:
+            scaler.scale(loss).backward()
+            if max_norm is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            if max_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            optimizer.step()
 
         total_loss += loss.item()
         num_batches += 1
@@ -59,7 +83,7 @@ def _voc_average_precision(recalls, precisions):
 
 @torch.no_grad()
 def evaluate(model, data_loader, device, iou_threshold: float = 0.5, score_threshold: float = 0.05):
-    """Simplified mAP@``iou_threshold`` over a validation/test data loader.
+    """Simplified box mAP@``iou_threshold`` over a validation/test data loader.
 
     Returns:
         (mean_ap, per_class_ap) where ``per_class_ap`` maps category id to
