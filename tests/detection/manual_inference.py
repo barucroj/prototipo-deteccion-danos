@@ -1,16 +1,18 @@
-"""Manual, interactive check of a trained car-parts detector checkpoint.
+"""Manual, interactive check of a trained detector checkpoint.
 
 Opens a native file-picker window so you can choose any photo on your PC,
-runs the detector on it, and shows the result with predicted boxes/labels
-drawn on top.
+runs a detector on it, and shows the result with predicted boxes, labels and
+(for the damage model) masks drawn on top.
+
+Works with either detector: checkpoints saved by the train CLIs record their
+own ``arch`` and ``categories``, so the same script handles the car-parts
+Faster R-CNN and the damage Mask R-CNN without being told which is which.
 
 Run directly — this opens GUI windows, so it is NOT a pytest test and is not
 collected by `pytest`/`python -m pytest tests/`:
 
     python tests/detection/manual_inference.py
-
-To evaluate a different checkpoint (e.g. a full training run instead of the
-`models/checkpoints/test/` smoke-test one), just change CHECKPOINT_PATH below.
+    python tests/detection/manual_inference.py models/checkpoints/damage/v1/best_model.pth
 """
 
 import os
@@ -25,37 +27,17 @@ from torchvision.transforms import functional as F
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-from src.detection.model import build_model  # noqa: E402
+from src.detection.common.predict import load_checkpoint  # noqa: E402
+from src.detection.common.visualize import draw_detections  # noqa: E402
 
-# Checkpoint to evaluate. Relative paths are resolved against the project
-# root, so this can stay relative regardless of where you run the script
-# from. Point this at any checkpoint saved by `python -m src.detection.train`
-# (it has `best_model.pth` and `last_model.pth`).
-CHECKPOINT_PATH = "models/checkpoints/test/best_model.pth"
+# Checkpoint to evaluate, overridable as argv[1]. Relative paths are resolved
+# against the project root, so this stays valid regardless of where you run
+# the script from. Point it at any checkpoint saved by a train CLI, e.g.
+# models/checkpoints/damage/v1/best_model.pth for the damage detector.
+DEFAULT_CHECKPOINT = os.path.join("models", "checkpoints", "car_parts", "v1", "best_model.pth")
 
 # Minimum confidence score for a detection to be drawn/reported.
 SCORE_THRESHOLD = 0.3
-
-
-def load_checkpoint(checkpoint_path: str, device: torch.device):
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    model = build_model(num_classes=checkpoint["num_classes"], pretrained=False)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.to(device)
-    model.eval()
-    categories = {int(k): v for k, v in checkpoint["categories"].items()}
-    return model, categories
-
-
-def draw_predictions(image_bgr, boxes, labels, scores, categories):
-    for box, label, score in zip(boxes, labels, scores):
-        x1, y1, x2, y2 = [int(v) for v in box]
-        name = categories.get(int(label), str(int(label)))
-        cv2.rectangle(image_bgr, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        text = f"{name} {score:.2f}"
-        cv2.putText(image_bgr, text, (x1, max(y1 - 5, 0)), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5, (0, 255, 0), 1, cv2.LINE_AA)
-    return image_bgr
 
 
 def pick_image_path() -> str:
@@ -70,7 +52,7 @@ def pick_image_path() -> str:
 
 
 def main():
-    checkpoint_path = CHECKPOINT_PATH
+    checkpoint_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CHECKPOINT
     if not os.path.isabs(checkpoint_path):
         checkpoint_path = os.path.join(PROJECT_ROOT, checkpoint_path)
 
@@ -91,9 +73,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, categories = load_checkpoint(checkpoint_path, device)
 
-    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-    tensor = F.to_tensor(image_rgb).to(device)
-
+    tensor = F.to_tensor(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)).to(device)
     with torch.no_grad():
         output = model([tensor])[0]
 
@@ -101,6 +81,7 @@ def main():
     boxes = output["boxes"][keep].cpu().numpy()
     labels = output["labels"][keep].cpu().numpy()
     scores = output["scores"][keep].cpu().numpy()
+    masks = output["masks"][keep].cpu().numpy() if "masks" in output else None
 
     print(f"Checkpoint: {checkpoint_path}")
     print(f"Image: {image_path}")
@@ -108,7 +89,7 @@ def main():
     for label, score in zip(labels, scores):
         print(f"  {categories.get(int(label), int(label))}: {score:.2f}")
 
-    annotated = draw_predictions(image_bgr.copy(), boxes, labels, scores, categories)
+    annotated = draw_detections(image_bgr.copy(), boxes, labels, scores, categories, masks=masks)
 
     cv2.imshow("Detections (press any key to close)", annotated)
     cv2.waitKey(0)

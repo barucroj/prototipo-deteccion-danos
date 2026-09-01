@@ -1,0 +1,136 @@
+REENTRENAR LOS MODELOS DE DETECCION
+Proyecto: prototipo-deteccion-danos
+=====================================================
+
+Hay DOS detectores y comparten el mismo pipeline. Solo cambia la config:
+
+  1) PARTES DEL AUTO   src/detection/car_parts/   Faster R-CNN, solo cajas
+     Dataset: data/raw/Car parts coco-segmentation/  (47 categorias de partes)
+     Responde "que parte del auto es esta region" (puerta, cofre, salpicadera...).
+
+  2) DANOS             src/detection/damage/      Mask R-CNN, cajas + mascaras
+     Dataset: data/raw/CarDD_release/CarDD_release/CarDD_COCO/  (6 tipos de dano)
+     Responde "que dano hay aqui" (dent, scratch, crack, glass shatter,
+     lamp broken, tire flat).
+
+IMPORTANTE: usa siempre el interprete de venv_cuda (es el unico con GPU):
+
+    ./venv_cuda/Scripts/python.exe -m src.detection.car_parts.train
+    ./venv_cuda/Scripts/python.exe -m src.detection.damage.train
+
+Todo se controla con flags, no hace falta editar codigo. Con --help ves la
+lista completa. Los flags mas importantes (identicos para los dos modelos):
+
+    --epochs N            numero de epocas
+    --batch-size N        imagenes por batch (2 es el maximo comodo en 6 GB)
+    --lr LR               learning rate (default 0.005)
+    --output DIR          donde se guardan los checkpoints
+    --device cpu|cuda     default: cuda si esta disponible
+    --no-amp              apaga precision mixta (AMP esta ON por default en GPU)
+    --eval-every N        evaluar cada N epocas (la ultima siempre se evalua)
+    --lr-step-size N      baja el LR x0.1 cada N epocas
+    --max-train-images N  limita el train set  (SOLO para pruebas rapidas)
+    --max-val-images N    limita el val set    (SOLO para pruebas rapidas)
+    --metric coco|simple  coco (default) = COCO AP estandar via pycocotools,
+                          comparable con papers. simple = la metrica casera
+                          vieja. NO son comparables entre si.
+
+
+1) ENTRENAMIENTO REAL — PARTES
+   ---------------------------------------------------------------
+   333 imagenes de train, 47 clases. Ya hay un modelo entrenado en
+   models/checkpoints/car_parts/v1/ (20 epocas, mejor val mAP@0.5 = 0.7878).
+
+       ./venv_cuda/Scripts/python.exe -m src.detection.car_parts.train \
+           --epochs 20 --output models/checkpoints/car_parts/v2
+
+   OJO: en v1 el val mAP se estanca en ~0.78 a partir de la epoca 11 mientras
+   el train loss sigue bajando: eso es sobreajuste. Mas epocas no van a
+   ayudar; lo que ayudaria es data augmentation o mas datos.
+
+
+2) ENTRENAMIENTO REAL — DANOS
+   ---------------------------------------------------------------
+   2816 imagenes de train (8.5x mas que partes), 810 de val, 6 clases.
+
+       ./venv_cuda/Scripts/python.exe -m src.detection.damage.train \
+           --epochs 12 --lr-step-size 8 --output models/checkpoints/damage/v1
+
+   TIEMPO ESTIMADO (medido en la RTX 3050 6GB, batch-size 2, AMP ON):
+       train  ~1.1 batch/s -> 1408 batches -> ~22 min por epoca
+       eval   ~1.1 batch/s ->  405 batches -> ~ 6 min por epoca
+       total  ~28 min/epoca  ->  12 epocas ~= 5.5 horas
+
+   Con --eval-every 2 baja a ~4.9 horas a cambio de una curva mas gruesa.
+   La laptop queda ocupada todo ese rato; conviene lanzarlo de noche.
+
+   Las clases estan desbalanceadas (instancias en train):
+       scratch 2560 | dent 1806 | crack 651 | lamp broken 494
+       glass shatter 475 | tire flat 225
+   El AP de "tire flat" va a ser el numero menos confiable de todos.
+
+
+3) PRUEBA RAPIDA (smoke test) ANTES DE UN ENTRENAMIENTO LARGO
+   ---------------------------------------------------------------
+   Valida que todo el pipeline corre de punta a punta en ~30 segundos:
+
+       ./venv_cuda/Scripts/python.exe -m src.detection.damage.train \
+           --epochs 1 --max-train-images 40 --max-val-images 20 \
+           --output models/checkpoints/damage/smoke_test
+
+   El mAP que sale de ahi NO significa nada, solo se mira que no truene.
+
+
+4) VER LOS RESULTADOS
+   ---------------------------------------------------------------
+   Cada entrenamiento escribe en --output:
+       best_model.pth   el de mejor val mAP@0.5
+       last_model.pth   el de la ultima epoca
+       metrics.json     loss y mAP por epoca, mas el AP por clase
+
+   Los checkpoints se describen a si mismos (guardan arch, num_classes y
+   categories), asi que para inferencia no hay que decirle de que modelo son:
+
+       ./venv_cuda/Scripts/python.exe -m src.detection.damage.predict \
+           models/checkpoints/damage/v1/best_model.pth \
+           "data/raw/CarDD_release/CarDD_release/CarDD_COCO/test2017" \
+           models/checkpoints/damage/v1/predictions_preview \
+           -n 10 --score-threshold 0.5
+
+   Para probar con una foto propia, con un explorador de archivos:
+
+       ./venv_cuda/Scripts/python.exe tests/detection/manual_inference.py \
+           models/checkpoints/damage/v1/best_model.pth
+
+
+5) QUE ARCHIVO TOCAR SI QUIERES CAMBIAR ALGO
+   ---------------------------------------------------------------
+   src/detection/common/model.py       arquitecturas (build_faster_rcnn /
+                                        build_mask_rcnn). Cambiar backbone aqui.
+   src/detection/common/trainer.py     loop de entrenamiento, optimizador,
+                                        checkpoints, flags del CLI. Se comparte:
+                                        lo que cambies aqui aplica a los DOS.
+   src/detection/common/engine.py      train_one_epoch y la metrica mAP@0.5.
+   src/detection/common/coco_dataset.py  lectura de COCO y rasterizado de
+                                        poligonos a mascaras.
+   src/detection/car_parts/config.py   rutas y defaults del modelo de partes.
+   src/detection/damage/config.py      rutas y defaults del modelo de danos.
+
+   Para agregar un TERCER detector: crea src/detection/<nombre>/ con un
+   config.py (un DetectorConfig) y los dos wrappers train.py / predict.py.
+   No hay que copiar el pipeline.
+
+   METRICA: por default se usa COCO AP estandar (pycocotools 2.0.11, ya
+   instalado en venv_cuda). Es la que se cita en la tesis porque es comparable
+   con los numeros publicados. El best_model.pth se elige por AP@0.5:0.95.
+   Para el modelo de danos se reportan DOS: bbox AP y segm (mask) AP.
+
+   src/detection/common/coco_eval.py    evaluacion COCO estandar.
+   src/detection/common/engine.py       metrica casera, solo de respaldo si
+                                        pycocotools no estuviera disponible
+                                        (--metric simple). Sus numeros NO son
+                                        comparables con los COCO.
+
+   Referencia ya medida: car_parts/v1 en el split test (16 imagenes) da
+   AP@0.5:0.95 = 0.5389 y AP50 = 0.7689. La metrica vieja daba 0.7750, o sea
+   seguia de cerca al AP50 pero nunca reportaba el AP@0.5:0.95 estricto.
