@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader
 from src.detection.common.coco_dataset import build_dataset, collate_fn
 from src.detection.common.coco_eval import PYCOCOTOOLS_AVAILABLE, evaluate_coco
 from src.detection.common.model import ARCHITECTURES, build_model
+from src.detection.common.transforms import build_train_transforms
 
 
 def build_arg_parser(cfg) -> argparse.ArgumentParser:
@@ -44,6 +45,16 @@ def build_arg_parser(cfg) -> argparse.ArgumentParser:
                         help="Force mixed precision on (default: on when device is cuda).")
     parser.add_argument("--no-amp", dest="amp", action="store_false",
                         help="Force mixed precision off.")
+    parser.add_argument("--augment", dest="augment", action="store_true", default=True,
+                        help="Train-time augmentation: horizontal flip plus brightness, "
+                             "contrast and saturation jitter. On by default; never applied "
+                             "to the validation split.")
+    parser.add_argument("--no-augment", dest="augment", action="store_false",
+                        help="Disable train-time augmentation.")
+    parser.add_argument("--hflip-prob", type=float, default=0.5,
+                        help="Probability of the horizontal flip (default 0.5).")
+    parser.add_argument("--jitter-prob", type=float, default=0.5,
+                        help="Probability of the photometric jitter (default 0.5).")
     parser.add_argument("--metric", default="coco" if PYCOCOTOOLS_AVAILABLE else "simple",
                         choices=("coco", "simple"),
                         help="'coco' = standard COCO AP via pycocotools (comparable to "
@@ -79,7 +90,14 @@ def run_training(cfg, args) -> float:
     if args.metric == "coco" and not PYCOCOTOOLS_AVAILABLE:
         raise SystemExit("--metric coco requires pycocotools; install it or pass --metric simple")
 
-    train_dataset = build_dataset(cfg, cfg.train_split, args.data_root)
+    # Augmentation goes on the training split only: augmenting validation would
+    # make its scores incomparable between runs.
+    train_transforms = build_train_transforms(
+        hflip_prob=args.hflip_prob, jitter_prob=args.jitter_prob
+    ) if args.augment else None
+
+    train_dataset = build_dataset(cfg, cfg.train_split, args.data_root,
+                                  transforms=train_transforms)
     valid_dataset = build_dataset(cfg, cfg.val_split, args.data_root)
 
     if args.max_train_images is not None:
@@ -97,6 +115,7 @@ def run_training(cfg, args) -> float:
     print(f"Train images: {len(train_dataset)}  |  Valid images: {len(valid_dataset)}")
     print(f"Classes: {train_dataset.num_classes}  |  Arch: {args.arch}  |  Masks: {cfg.with_masks}")
     print(f"Device: {device}  |  AMP: {use_amp}  |  Metric: {args.metric}")
+    print(f"Augmentation: {train_transforms if train_transforms else 'off'}")
     print(f"Epochs: {args.epochs}  |  Batch size: {args.batch_size}  |  LR: {args.lr}")
     print(f"{'='*80}\n")
 
@@ -124,6 +143,7 @@ def run_training(cfg, args) -> float:
             "with_masks": cfg.with_masks,
             "detector": cfg.name,
             "metric": args.metric,
+            "augmented": bool(train_transforms),
             "epoch": epoch,
         }
         # Under --metric coco, val_map is AP@0.5:0.95 and val_map50 is AP50;
