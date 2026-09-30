@@ -171,7 +171,7 @@ falta capturar y anotar 20-40 pares propios marcando qué daños son nuevos en B
   por defecto; v1 con `M2_CHECKPOINT=...`) con **las clases del checkpoint** (aplica su
   `class_map` al GT y verifica que las categorías coinciden). Una sola pasada de inferencia:
   COCO AP de caja y máscara global y por clase (con instancias y "poco fiable" < 10),
-  figuras predicción/GT con máscaras, y salida de M2 para M3 en
+  figuras predicción/GT en dos secciones (7a máscaras, 7b cajas), y salida de M2 para M3 en
   `tests/detection/outputsM2/<carpeta del checkpoint>/`: un JSON por imagen
   `{imagen, image_id, width, height, checkpoint, score_threshold, clases, partes: [{id,
   clase_parte, confianza, bbox [x1,y1,x2,y2], area_px, mascara: "masks/<img>_pNN.png"}]}` con
