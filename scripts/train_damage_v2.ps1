@@ -14,7 +14,9 @@ param(
     [int]$Epochs = 12,
     [int]$LrStepSize = 8,
     [switch]$NoWatch,
-    # Flags extra para el trainer, p. ej. -Extra "--max-train-images","40" (solo pruebas).
+    # Cualquier flag del trainer puesto al final pasa tal cual, p. ej. (solo pruebas):
+    #   ... train_damage_v2.ps1 -Epochs 2 --max-train-images 40 --max-val-images 20
+    [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Extra = @()
 )
 $ErrorActionPreference = "Stop"

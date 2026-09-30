@@ -323,8 +323,10 @@ es casi todo fondo. Desde 2026-09-30 la config selecciona `best_model.pth` por *
 Corre `damage.train --epochs 12 --lr-step-size 8 --select-by segm --output
 models/checkpoints/damage/v2` (augmentation por defecto) y abre en otra ventana el mismo
 monitor que car_parts (`common.watch`). Parámetros: `-Output`, `-Epochs`, `-LrStepSize`,
-`-NoWatch`, `-Extra` (flags extra para el trainer). Se niega si `-Output` ya tiene
-`best_model.pth` y avisa si el árbol tiene cambios sin commitear.
+`-NoWatch`; cualquier flag del trainer puesto al final pasa tal cual (p. ej.
+`--max-train-images 40`). Se niega si `-Output` ya tiene `best_model.pth` y avisa si el árbol
+tiene cambios sin commitear. Probado el 2026-09-30 con 2 épocas sobre 40/20 imágenes
+(`damage/smoke_test_v2`): completa, selecciona por mask AP, pico de GPU 3.10 GB.
 
 Auditoría de CarDD (2026-09-30): sin archivos faltantes, tamaños coherentes con el JSON, un
 polígono válido por anotación, sin máscaras vacías ni cajas inválidas, sin imágenes vacías.
