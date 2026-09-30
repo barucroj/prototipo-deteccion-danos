@@ -320,6 +320,8 @@ es casi todo fondo. Selecciona por bbox AP salvo `--select-by segm`.
 - `car_parts/smoke_test/`, `car_parts/smoke_test_masks/` — pruebas de pipeline, no modelos.
 - `car_parts/v2_interrumpido_smoke/` — dos corridas de v2 interrumpidas y mezcladas (17 s, y
   1 época: bbox AP 0.3082, mask AP 0.2958, 105 s/época). No es un modelo usable.
+- `car_parts/v2_fallido_rle/` — primera corrida real de v2 (29 clases), falló en la época 2 por
+  el bug de RLE ya corregido en `7bbf1b9`. Época 1 en val: box AP 0.487, mask AP 0.477.
   `car_parts/v2/` no existe: queda libre para la corrida real.
 - `car_parts/_muestra_clases/` — muestra visual (4 imágenes de train por clase dudosa, con
   máscaras y nombre) con la que se cerró el `class_map`. Una hoja de contacto por grupo.
