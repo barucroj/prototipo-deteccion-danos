@@ -65,9 +65,11 @@ lista completa. Los flags mas importantes (identicos para todos):
    poligonos validos.
 
    CLASES: v2 aplica src/detection/car_parts/class_map.py a train, val y test:
-   izquierda/derecha fusionadas, 6 clases raras descartadas -> 33 clases
-   finales PROVISIONALES. NO ENTRENAR v2 hasta cerrar PENDING_DECISIONS en ese
-   archivo (se deciden con models/checkpoints/car_parts/_muestra_clases/).
+   izquierda/derecha fusionadas, 9 clases descartadas -> 29 clases finales
+   (30 salidas con el fondo). Mapa cerrado el 2026-09-29 con la muestra
+   visual de models/checkpoints/car_parts/_muestra_clases/.
+   OJO: la etiqueta original "windshield" son los LIMPIAPARABRISAS (se
+   descarta); el cristal es "front_glass", que pasa a llamarse "windshield".
    El mapa aplicado queda en run_info.json y en el checkpoint.
 
        ./venv_cuda/Scripts/python.exe -m src.detection.car_parts.train_masks \

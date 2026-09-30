@@ -67,7 +67,7 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
 | Pieza | Estado |
 |---|---|
 | M1 | **Parcial.** `specular_removal.py` funciona y tiene pruebas. `normalization.py` hace resize 512×512 + ImageNet (incompatible, ver abajo). Falta validación de formato/resolución, EXIF, metadatos, pipeline encadenado y pruebas. Ningún script de entrenamiento o inferencia lo usa. |
-| M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN) tiene config, entrypoint (`train_masks.py`) y `class_map` (33 clases finales provisionales), **pero no hay modelo entrenado**. El `class_map` **no está cerrado**: 8 clases esperan decisión del usuario (`PENDING_DECISIONS`); no entrenar v2 antes. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. |
+| M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN) tiene config, entrypoint (`train_masks.py`) y `class_map` cerrado (29 clases finales), **pero no hay modelo entrenado**. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. |
 | M3 | Hay modelo: `damage/v1` (val: bbox AP 0.5191, mask AP 0.5020, mejor época 11, sin augmentation). **No existe** el módulo de asignación a partes ni el JSON. |
 | M4 | No existe. |
 | Orquestador / Streamlit | No existen. |
@@ -103,8 +103,12 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
   se repite entre splits (sin fuga).
 - **(g) AP de v1 en test según el conjunto de clases.** Sobre las 47 clases (41 con instancias
   en test): AP 0.5389 / AP50 0.7689, reproducido exactamente por `compare_versions`.
-  Excluyendo las clases que el `class_map` descarta (en test solo `air_intake`, 1 instancia,
-  AP 0): 0.5524 / 0.7881. Mapeado a las 33 clases finales: 0.5478 / 0.7982.
+  Excluyendo las 9 clases que el `class_map` descarta: 0.5746 / 0.8075. Mapeado a las 29
+  clases finales: 0.5757 / 0.8240 (diferencia +0.0011, IC 95 % [−0.026, +0.033]: reducir
+  clases no cambia el AP de v1 de forma distinguible).
+- **(h) En Roboflow Car-Parts, `windshield` son los limpiaparabrisas**, no el parabrisas (franja
+  delgada al pie del cristal; nunca se solapa con `front_glass`, que es el cristal). El
+  `class_map` descarta la etiqueta original `windshield` y renombra `front_glass` → `windshield`.
 
 ## Métricas que pide el protocolo
 Precision, Recall, F1, mAP, IoU y Accuracy. Para los detectores (M2, M3), COCO AP vía
@@ -265,16 +269,21 @@ sin `class_map`) se conserva para reproducir v1. `MASK_CONFIG` (v2): `with_masks
 `class_map=CLASS_MAP`. Entrenar con `train_masks.py`.
 
 - `class_map.py` — `CLASS_MAP`, tabla **por nombre** (auditable) de las 47 clases originales
-  a su clase final o `None`. Hoy: 6 descartadas (<10 instancias en train: `air_intake`,
-  `left_side_door`, `left_windowark`, `right_windowark`, `right_glass`, `shield`), 8 pares
-  izq./der. fusionados (`front_door`, `back_door`, `front_door_glass`, `back_door_glass`,
-  `quarter_glass`, `headlight`, `taillight`, `fog_light`), `side_steps` → `side_step`, el
-  resto igual → **33 clases finales provisionales**. `PENDING_DECISIONS` lista las 8 que el
-  usuario decide viendo `models/checkpoints/car_parts/_muestra_clases/`: `back_light` (¿a
-  `taillight`?), `fog_lights` (¿a `fog_light`?), `front_glass`/`windshield`,
-  `bumper`/`back_bumper`, `front_mirror`/`side_mirror`. Mientras tanto quedan sin fusionar.
-  Observado en la muestra: `back_light` está anotado de forma inconsistente (a veces el
-  medallón trasero, a veces un reflejante en la defensa).
+  a su clase final o `None`. **Cerrado el 2026-09-29 → 29 clases finales** (30 salidas con
+  fondo); `PENDING_DECISIONS` está vacío.
+  - Descartadas (9): por tener <10 instancias en train, `air_intake`, `left_side_door`,
+    `left_windowark`, `right_windowark`, `right_glass`, `shield`; por decisión del usuario con
+    la muestra visual, `back_light` (anotación inconsistente: a veces el medallón trasero, a
+    veces un reflejante en la defensa), `front_mirror` y `windshield` (limpiaparabrisas, ver
+    hallazgo (h)).
+  - Fusionadas: 8 pares izq./der. (`front_door`, `back_door`, `front_door_glass`,
+    `back_door_glass`, `quarter_glass`, `headlight`, `taillight`, `fog_light`), más
+    `fog_lights` → `fog_light`.
+  - Renombradas: `front_glass` → `windshield` (el cristal), `side_steps` → `side_step`.
+  - `bumper` y `back_bumper` se mantienen separadas; el resto queda igual.
+  - Clases finales con <10 instancias en val o test (AP poco fiable): `back_bumper`,
+    `back_glass`, `emblem`, `fog_light`, `hood`, `indicator_light`, `mudguard`,
+    `roof_trunk`, `step`, `trunk`.
 - `compare_versions.py` — `python -m src.detection.car_parts.compare_versions --v1 V1.pth
   --v2 V2.pth --split test --output DIR`. Experimento A: v1 en sus clases originales contra v1
   con predicciones mapeadas por el `class_map` (NMS dentro de cada clase final, IoU 0.5).
@@ -310,7 +319,7 @@ es casi todo fondo. Selecciona por bbox AP salvo `--select-by segm`.
   1 época: bbox AP 0.3082, mask AP 0.2958, 105 s/época). No es un modelo usable.
   `car_parts/v2/` no existe: queda libre para la corrida real.
 - `car_parts/_muestra_clases/` — muestra visual (4 imágenes de train por clase dudosa, con
-  máscaras y nombre) para cerrar `PENDING_DECISIONS`. Una hoja de contacto por grupo.
+  máscaras y nombre) con la que se cerró el `class_map`. Una hoja de contacto por grupo.
 - `car_parts/_compare_v1_vs_v1/` — salida de `compare_versions` con v1 contra sí mismo en test.
 - `damage/v1/` — Mask R-CNN, 12 épocas, `--lr-step-size 8`, AMP, batch 2, **sin
   augmentation**, 315 min. Seleccionado por bbox AP; mejor época 11 (LR 0.0005, deducido del
@@ -332,7 +341,7 @@ es casi todo fondo. Selecciona por bbox AP salvo `--select-by segm`.
 `tests/detection/manual_inference.py` es un demo con GUI, no se colecta.
 
 ## Plan de trabajo acordado (registrado, no ejecutado salvo donde se indica)
-0. Cerrar `PENDING_DECISIONS` del `class_map` (el usuario, con la muestra visual).
+0. ~~Cerrar el `class_map`~~ — hecho (29 clases).
 1. Entrenamientos: `car_parts/v2` (Mask R-CNN, con augmentation, carpeta nueva; comparar con
    v1 usando `compare_versions` en test) y `damage/v2`
    (augmentation, `--epochs 12 --lr-step-size 8`, `--output damage/v2`). Considerar una
