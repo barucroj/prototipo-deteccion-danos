@@ -8,6 +8,12 @@ reported metrics.
 Checkpoints are self-describing: they carry ``num_classes``, ``arch``,
 ``with_masks`` and the ``categories`` id->name map, so ``predict.py`` can
 rebuild the right model without being told which detector it came from.
+
+Every run is audited (see :mod:`src.detection.common.audit`): besides the
+checkpoints and ``metrics.json`` it writes ``run_info.json`` (args, git
+commit, versions, dataset sizes), a live ``status.json`` (epoch, batch,
+progress, ETA) and ``train.log``. Follow a run with
+``python -m src.detection.common.watch <output_dir>``.
 """
 
 from __future__ import annotations
@@ -15,15 +21,24 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import time
+import traceback
+from dataclasses import asdict
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from src.detection.common.audit import (
+    RunAuditor, dataset_summary, environment_info, format_duration, git_info,
+)
 from src.detection.common.coco_dataset import build_dataset, collate_fn
 from src.detection.common.coco_eval import PYCOCOTOOLS_AVAILABLE, evaluate_coco
 from src.detection.common.model import ARCHITECTURES, build_model
 from src.detection.common.transforms import build_train_transforms
+
+SELECT_BY = ("bbox", "segm")
 
 
 def build_arg_parser(cfg) -> argparse.ArgumentParser:
@@ -71,24 +86,55 @@ def build_arg_parser(cfg) -> argparse.ArgumentParser:
     parser.add_argument("--max-val-images", type=int, default=None,
                         help="If set, cap the validation set to this many images (smoke tests). "
                              "mAP from a capped split is not comparable to a full-split run.")
+    parser.add_argument("--select-by", default=cfg.default_select_by, choices=SELECT_BY,
+                        help="COCO AP@0.5:0.95 that picks best_model.pth: 'bbox' (box AP) or "
+                             "'segm' (mask AP, Mask R-CNN only). Default comes from the config.")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Seeds python, numpy and torch (shuffling, augmentation, head "
+                             "init). Pass -1 to leave unseeded. cuDNN kernels are still not "
+                             "bit-deterministic, so two seeded GPU runs agree closely, not exactly.")
     return parser
 
 
-def run_training(cfg, args) -> float:
-    """Train, evaluating on the validation split after every epoch.
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
-    Writes ``best_model.pth`` (highest validation mAP so far),
-    ``last_model.pth`` and ``metrics.json`` to ``args.output``.
+
+def validate_args(cfg, args) -> None:
+    """Fail before loading anything when flags contradict each other."""
+    if args.metric == "coco" and not PYCOCOTOOLS_AVAILABLE:
+        raise SystemExit("--metric coco requires pycocotools; install it or pass --metric simple")
+    if cfg.with_masks and args.arch != "mask_rcnn":
+        raise SystemExit(f"{cfg.name} produces masks; --arch must be mask_rcnn")
+    if args.select_by == "segm":
+        if not cfg.with_masks:
+            raise SystemExit("--select-by segm needs a config with masks (Mask R-CNN)")
+        if args.metric != "coco":
+            raise SystemExit("--select-by segm needs --metric coco (the simple metric is boxes-only)")
+
+
+def run_training(cfg, args) -> float:
+    """Train, evaluating on the validation split every ``--eval-every`` epochs.
+
+    Writes ``best_model.pth`` (best validation AP per ``--select-by``),
+    ``last_model.pth``, ``metrics.json`` and the audit files
+    (``run_info.json``, ``status.json``, ``train.log``) to ``args.output``.
 
     Returns:
-        The best validation mAP@0.5 reached.
+        The best validation value of the selection metric.
     """
+    validate_args(cfg, args)
     os.makedirs(args.output, exist_ok=True)
     device = torch.device(args.device)
     use_amp = args.amp if args.amp is not None else (device.type == "cuda")
+    if args.seed >= 0:
+        seed_everything(args.seed)
 
-    if args.metric == "coco" and not PYCOCOTOOLS_AVAILABLE:
-        raise SystemExit("--metric coco requires pycocotools; install it or pass --metric simple")
+    auditor = RunAuditor(args.output, args.epochs)
+    log = auditor.log
 
     # Augmentation goes on the training split only: augmenting validation would
     # make its scores incomparable between runs.
@@ -110,14 +156,34 @@ def run_training(cfg, args) -> float:
     valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False,
                               num_workers=args.workers, collate_fn=collate_fn)
 
-    print(f"\n{'='*80}")
-    print(f"Detector: {cfg.name} — {cfg.description}")
-    print(f"Train images: {len(train_dataset)}  |  Valid images: {len(valid_dataset)}")
-    print(f"Classes: {train_dataset.num_classes}  |  Arch: {args.arch}  |  Masks: {cfg.with_masks}")
-    print(f"Device: {device}  |  AMP: {use_amp}  |  Metric: {args.metric}")
-    print(f"Augmentation: {train_transforms if train_transforms else 'off'}")
-    print(f"Epochs: {args.epochs}  |  Batch size: {args.batch_size}  |  LR: {args.lr}")
-    print(f"{'='*80}\n")
+    train_summary = dataset_summary(train_dataset)
+    auditor.write_run_info({
+        "detector": cfg.name,
+        "description": cfg.description,
+        "args": vars(args),
+        "config": {k: (sorted(v) if isinstance(v, frozenset) else v)
+                   for k, v in asdict(cfg).items()},
+        "git": git_info(),
+        "environment": environment_info(device),
+        "amp": use_amp,
+        "augmentation": repr(train_transforms) if train_transforms else None,
+        "datasets": {"train": train_summary, "valid": dataset_summary(valid_dataset)},
+    })
+
+    log(f"\n{'='*80}")
+    log(f"Detector: {cfg.name} — {cfg.description}")
+    log(f"Train images: {len(train_dataset)}  |  Valid images: {len(valid_dataset)}")
+    log(f"Classes: {train_dataset.num_classes}  |  Arch: {args.arch}  |  Masks: {cfg.with_masks}")
+    log(f"Device: {device}  |  AMP: {use_amp}  |  Metric: {args.metric}  |  "
+        f"best_model by: {args.select_by} AP  |  Seed: {args.seed if args.seed >= 0 else 'none'}")
+    log(f"Augmentation: {train_transforms if train_transforms else 'off'}")
+    log(f"Epochs: {args.epochs}  |  Batch size: {args.batch_size}  |  LR: {args.lr}"
+        f"  |  LR step: {args.lr_step_size or 'none'}")
+    if train_summary["classes_without_instances"]:
+        log("WARNING: classes with no training instances: "
+            + ", ".join(train_summary["classes_without_instances"]))
+    log(f"Output: {args.output}  (watch: python -m src.detection.common.watch {args.output})")
+    log(f"{'='*80}\n")
 
     model = build_model(train_dataset.num_classes, arch=args.arch, pretrained=True)
     model.to(device)
@@ -134,6 +200,9 @@ def run_training(cfg, args) -> float:
     # Imported here so the module stays importable without the heavier deps loaded early.
     from src.detection.common.engine import evaluate, train_one_epoch
 
+    auditor.configure(cfg.name, args.select_by, len(train_loader), len(valid_loader),
+                      optimizer=optimizer, device=device)
+
     def checkpoint_payload(epoch, val_map=None, val_map50=None, coco_stats=None):
         payload = {
             "model_state_dict": model.state_dict(),
@@ -143,11 +212,14 @@ def run_training(cfg, args) -> float:
             "with_masks": cfg.with_masks,
             "detector": cfg.name,
             "metric": args.metric,
+            "select_by": args.select_by,
+            "seed": args.seed,
             "augmented": bool(train_transforms),
             "epoch": epoch,
         }
-        # Under --metric coco, val_map is AP@0.5:0.95 and val_map50 is AP50;
-        # under --metric simple both are the same from-scratch mAP@0.5.
+        # Under --metric coco, val_map is AP@0.5:0.95 and val_map50 is AP50 of
+        # the --select-by IoU type; under --metric simple both are the same
+        # from-scratch box mAP@0.5.
         if val_map is not None:
             payload["val_map"] = val_map
             payload["val_map50"] = val_map50
@@ -159,84 +231,116 @@ def run_training(cfg, args) -> float:
     best_map = -1.0
     start_time = time.time()
 
-    for epoch in range(1, args.epochs + 1):
-        epoch_start = time.time()
-        print(f"\n[Epoch {epoch}/{args.epochs}]")
+    try:
+        for epoch in range(1, args.epochs + 1):
+            is_eval_epoch = (epoch % args.eval_every == 0) or (epoch == args.epochs)
+            lr_now = optimizer.param_groups[0]["lr"]
+            epoch_start = time.time()
+            auditor.start_epoch(epoch, is_eval_epoch)
+            log(f"\n[Epoch {epoch}/{args.epochs}]  lr {lr_now:g}")
 
-        train_loss = train_one_epoch(model, optimizer, train_loader, device, scaler=scaler)
+            auditor.start_phase("train", len(train_loader))
+            train_loss = train_one_epoch(model, optimizer, train_loader, device, scaler=scaler,
+                                         on_batch=auditor.on_batch)
+            loss_components = auditor.epoch_loss_components()
 
-        is_eval_epoch = (epoch % args.eval_every == 0) or (epoch == args.epochs)
-        val_map = val_map50 = None
-        coco_stats = {}
-        per_class_ap = {}
+            val_map = val_map50 = None
+            coco_stats = {}
+            per_class_ap = {}
 
-        if is_eval_epoch:
-            if args.metric == "coco":
-                coco_stats = evaluate_coco(
-                    model, valid_loader, device, valid_dataset.ann_json_path,
-                    image_ids=valid_dataset.coco_image_ids, with_masks=cfg.with_masks,
-                )
-                # Checkpoint selection follows the primary COCO metric, AP@0.5:0.95.
-                val_map = coco_stats["bbox"]["AP"] if coco_stats else 0.0
-                val_map50 = coco_stats["bbox"]["AP50"] if coco_stats else 0.0
+            if is_eval_epoch:
+                auditor.start_phase("eval", len(valid_loader))
+                if args.metric == "coco":
+                    coco_stats = evaluate_coco(
+                        model, valid_loader, device, valid_dataset.ann_json_path,
+                        image_ids=valid_dataset.coco_image_ids, with_masks=cfg.with_masks,
+                        on_batch=auditor.on_batch,
+                    )
+                    # Checkpoint selection follows AP@0.5:0.95 of --select-by.
+                    selected = coco_stats.get(args.select_by, {})
+                    val_map = selected.get("AP", 0.0)
+                    val_map50 = selected.get("AP50", 0.0)
+                else:
+                    val_map50, per_class_ap = evaluate(model, valid_loader, device)
+                    val_map = val_map50
+
+            if lr_scheduler is not None:
+                lr_scheduler.step()
+
+            epoch_time = time.time() - epoch_start
+            elapsed = time.time() - start_time
+            eta_seconds = (elapsed / epoch) * (args.epochs - epoch)
+
+            is_best = val_map is not None and val_map > best_map
+            status = " * NEW BEST!" if is_best else ""
+
+            if val_map is None:
+                map_text = "eval skipped"
+            elif args.metric == "coco":
+                box = coco_stats.get("bbox", {})
+                map_text = f"box AP {box.get('AP', 0.0):.4f} | box AP50 {box.get('AP50', 0.0):.4f}"
+                if coco_stats.get("segm"):
+                    map_text += (f" | mask AP {coco_stats['segm']['AP']:.4f}"
+                                 f" | mask AP50 {coco_stats['segm']['AP50']:.4f}")
+                map_text += status
             else:
-                val_map50, per_class_ap = evaluate(model, valid_loader, device)
-                val_map = val_map50
+                map_text = f"mAP@0.5 {val_map:.4f}{status}"
 
-        if lr_scheduler is not None:
-            lr_scheduler.step()
+            log(f"\n  Loss: {train_loss:.4f}  |  {map_text}")
+            if loss_components:
+                log("  Loss terms: " + "  ".join(
+                    f"{k.replace('loss_', '')} {v:.4f}" for k, v in sorted(loss_components.items())))
+            log(f"  Time: {format_duration(epoch_time)}  |  Elapsed: {format_duration(elapsed)}"
+                f"  |  ETA: {format_duration(eta_seconds)}\n")
 
-        epoch_time = time.time() - epoch_start
-        elapsed = time.time() - start_time
-        eta_seconds = (elapsed / epoch) * (args.epochs - epoch)
+            record = {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "loss_components": loss_components,
+                "lr": lr_now,
+                "epoch_time_s": round(epoch_time, 1),
+                "gpu_peak_memory_gb": auditor.peak_gpu_memory_gb(),
+                "metric": args.metric,
+                "select_by": args.select_by,
+                "val_map": val_map,      # AP@0.5:0.95 of --select-by, or the simple mAP@0.5
+                "val_map50": val_map50,
+                "is_best": is_best,
+            }
+            if coco_stats:
+                record["coco"] = coco_stats
+            if per_class_ap:
+                record["per_class_ap"] = {str(k): v for k, v in sorted(per_class_ap.items())}
+            history.append(record)
 
-        is_best = val_map is not None and val_map > best_map
-        status = " * NEW BEST!" if is_best else ""
-
-        if val_map is None:
-            map_text = "eval skipped"
-        elif args.metric == "coco":
-            map_text = f"AP {val_map:.4f} | AP50 {val_map50:.4f}"
-            if coco_stats.get("segm"):
-                map_text += f" | mask AP {coco_stats['segm']['AP']:.4f}"
-            map_text += status
-        else:
-            map_text = f"mAP@0.5 {val_map:.4f}{status}"
-
-        print(f"\n  Loss: {train_loss:.4f}  |  {map_text}")
-        print(f"  Time: {epoch_time:.1f}s  |  Elapsed: {int(elapsed)}s  |  ETA: {int(eta_seconds)}s\n")
-
-        record = {
-            "epoch": epoch,
-            "train_loss": train_loss,
-            "metric": args.metric,
-            "val_map": val_map,      # COCO AP@0.5:0.95, or the simple mAP@0.5 fallback
-            "val_map50": val_map50,
-        }
-        if coco_stats:
-            record["coco"] = coco_stats
-        if per_class_ap:
-            record["per_class_ap"] = {str(k): v for k, v in sorted(per_class_ap.items())}
-        history.append(record)
-
-        torch.save(checkpoint_payload(epoch, val_map, val_map50, coco_stats),
-                   os.path.join(args.output, "last_model.pth"))
-        if is_best:
-            best_map = val_map
             torch.save(checkpoint_payload(epoch, val_map, val_map50, coco_stats),
-                       os.path.join(args.output, "best_model.pth"))
+                       os.path.join(args.output, "last_model.pth"))
+            if is_best:
+                best_map = val_map
+                torch.save(checkpoint_payload(epoch, val_map, val_map50, coco_stats),
+                           os.path.join(args.output, "best_model.pth"))
 
-        with open(os.path.join(args.output, "metrics.json"), "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2)
+            with open(os.path.join(args.output, "metrics.json"), "w", encoding="utf-8") as f:
+                json.dump(history, f, indent=2)
+            auditor.end_epoch(record, is_best, val_map)
+
+    except KeyboardInterrupt:
+        auditor.finish("interrupted")
+        raise
+    except BaseException:
+        auditor.finish("failed", error=traceback.format_exc())
+        raise
 
     total_time = time.time() - start_time
-    print(f"\n{'='*80}")
-    print("Training complete.")
-    metric_label = "COCO AP@0.5:0.95" if args.metric == "coco" else "mAP@0.5 (simple)"
-    print(f"  Best val {metric_label}: {best_map:.4f}")
-    print(f"  Total time: {int(total_time)}s ({int(total_time/60)}m)")
-    print(f"  Checkpoints saved to: {args.output}")
-    print(f"{'='*80}\n")
+    metric_label = (f"COCO {args.select_by} AP@0.5:0.95" if args.metric == "coco"
+                    else "mAP@0.5 (simple)")
+    best_epoch = auditor.best["epoch"] if auditor.best else None
+    log(f"\n{'='*80}")
+    log("Training complete.")
+    log(f"  Best val {metric_label}: {best_map:.4f}  (epoch {best_epoch})")
+    log(f"  Total time: {format_duration(total_time)}")
+    log(f"  Checkpoints saved to: {args.output}")
+    log(f"{'='*80}\n")
+    auditor.finish("completed")
     return best_map
 
 

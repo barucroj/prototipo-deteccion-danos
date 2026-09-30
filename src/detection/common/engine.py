@@ -21,7 +21,8 @@ from torchvision.ops import box_iou
 from tqdm import tqdm
 
 
-def train_one_epoch(model, optimizer, data_loader, device, scaler=None, max_norm: float = None):
+def train_one_epoch(model, optimizer, data_loader, device, scaler=None, max_norm: float = None,
+                    on_batch=None):
     """Runs one training epoch. Returns the mean total loss across batches.
 
     Args:
@@ -30,6 +31,10 @@ def train_one_epoch(model, optimizer, data_loader, device, scaler=None, max_norm
             which is what makes Mask R-CNN on ~1000px CarDD images fit in the
             6 GB of the development GPU.
         max_norm: Optional gradient-norm clipping threshold.
+        on_batch: Optional ``on_batch(batch_index, loss, loss_components)``
+            callback after each batch (``loss_components`` maps each loss
+            term, e.g. ``loss_mask``, to its float value). The trainer uses it
+            to keep the run's ``status.json`` current.
     """
     model.train()
     total_loss = 0.0
@@ -37,7 +42,7 @@ def train_one_epoch(model, optimizer, data_loader, device, scaler=None, max_norm
     use_amp = scaler is not None
 
     pbar = tqdm(data_loader, desc="Training", leave=True, unit="batch")
-    for images, targets in pbar:
+    for batch_index, (images, targets) in enumerate(pbar):
         images = [img.to(device) for img in images]
         targets = [{k: v.to(device) if torch.is_tensor(v) else v for k, v in t.items()} for t in targets]
 
@@ -62,6 +67,8 @@ def train_one_epoch(model, optimizer, data_loader, device, scaler=None, max_norm
         total_loss += loss.item()
         num_batches += 1
         pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+        if on_batch is not None:
+            on_batch(batch_index, loss.item(), {k: v.item() for k, v in loss_dict.items()})
 
     return total_loss / max(num_batches, 1)
 
