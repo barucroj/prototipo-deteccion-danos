@@ -1,31 +1,51 @@
 # Prototipo de Detección de Daños Vehiculares
 
-Basado en Redes Neuronales Siamesas y Deep Learning
+TT 27-1-0005 (ESCOM-IPN). Compara dos fotos del mismo vehículo — antes (A) y después (B) de
+una renta — y reporta los daños nuevos que aparecen en B.
+
+## Arquitectura
+1. **M1. Preprocesamiento óptico** (`src/preprocessing/`): valida formato y resolución
+   (mín. 1920×1080), corrige orientación EXIF, reduce reflejos, CLAHE opcional y devuelve
+   metadatos. No redimensiona ni normaliza: eso lo hacen los detectores.
+2. **M2. Segmentación de partes** (`src/detection/car_parts/`): Mask R-CNN sobre Roboflow
+   Car-Parts (47 clases). Devuelve `{clase_parte, confianza, bbox, máscara}` por parte.
+3. **M3. Detección de daños** (`src/detection/damage/`): Mask R-CNN sobre CarDD (6 clases) en
+   la imagen completa; asigna cada daño a la parte con mayor solapamiento (umbral 0.5) y
+   calcula su posición relativa. Devuelve un JSON por imagen, máscaras PNG e imagen anotada.
+4. **M4. Comparación antes/después**: lógica determinista (método húngaro por parte y tipo)
+   que clasifica cada daño como nuevo, preexistente o no visible. Devuelve un reporte JSON y
+   un mapa de cambios sobre B.
+
+Además: un orquestador A→B (M1→M2→M3→M4) y una interfaz web mínima en Streamlit.
+
+Metodología: espiral de Boehm con 4 vueltas (M1-M4), integración y cierre. Fecha final:
+23 nov 2026.
 
 ## Setup
+Entorno de referencia: Python 3.9 con CUDA 11.8 (ver `requirements-cuda.txt`).
 ```bash
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+python -m venv venv_cuda
+venv_cuda\Scripts\activate
+python -m pip install torch==2.7.1+cu118 torchvision==0.22.1+cu118 torchaudio==2.7.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+python -m pip install -r requirements-cuda.txt
+python -m pip install -e .
 ```
 
-## Estructura
-- `src/` - Código fuente
-- `data/` - Datasets
-- `tests/` - Tests
-- `notebooks/` - Exploración
+Entrenamiento e inferencia: ver `docs/reentrenar_modelos.txt`.
 
-## Roadmap
-- Sprint 1: Preprocesamiento
-- Sprint 2: Segmentación
-- Sprint 3: Entrenamiento
-- Sprint 4: Frontend
-- Sprint 5: Testing
+## Estructura
+- `src/preprocessing/` - M1
+- `src/detection/` - detectores de M2 y M3 (pipeline compartido en `common/`)
+- `data/` - Datasets (no versionados)
+- `models/checkpoints/` - Modelos entrenados (no versionados)
+- `tests/` - Pruebas (pytest)
+- `notebooks/` - Exploración y demos
+- `docs/` - Runbooks
 
 ## Datasets
 - CarDD: https://github.com/Bhavan2194/CarDD_Dataset
         https://github.com/CarDD-USTC/CarDD-USTC.github.io
-        
-- Car Detection : https://universe.roboflow.com/lidia-shishina-bijxk/car-parts-segmentation-tck28/dataset/4
 
-- Car-parts-segmentation: https://github.com/dsmlr/Car-Parts-Segmentation/tree/master 
+- Car parts (Roboflow): https://universe.roboflow.com/lidia-shishina-bijxk/car-parts-segmentation-tck28/dataset/4
+
+- Car-parts-segmentation: https://github.com/dsmlr/Car-Parts-Segmentation/tree/master
