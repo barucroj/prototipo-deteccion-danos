@@ -111,10 +111,22 @@ def test_real_splits_load_with_the_class_map(split):
     final = final_categories(CLASS_MAP)
     assert ds.categories == final
     assert ds.num_classes == len(final) + 1
-    discarded = {name for name, target in CLASS_MAP.items() if target is None}
-    assert not discarded & set(ds.categories.values())
     labels = {a["category_id"] for s in ds.samples for a in s[4]}
     assert labels <= set(final)
+    # Every instance of a discarded original class is removed. Compared by
+    # counts, not names: a final name may reuse a discarded original one
+    # (original "windshield" = wipers, discarded; final "windshield" = glass).
+    original = build_dataset(MASK_CONFIG, split, use_class_map=False)
+    counts = {}
+    for s in original.samples:
+        for a in s[4]:
+            name = original.categories[a["category_id"]]
+            counts[name] = counts.get(name, 0) + 1
+    discarded = {name for name, target in CLASS_MAP.items() if target is None}
+    assert ds.class_map_stats["instances_discarded"] == {n: counts[n] for n in sorted(discarded)
+                                                         if counts.get(n)}
+    kept = sum(ds.class_map_stats["instances_per_final_class"].values())
+    assert kept + sum(ds.class_map_stats["instances_discarded"].values()) == sum(counts.values())
 
 
 @needs_data

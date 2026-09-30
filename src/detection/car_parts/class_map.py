@@ -14,9 +14,9 @@ of A and B by class *and* position in the image, not by name alone.
 Training-split counts below are Roboflow-augmented: train holds 111 real
 photos x 3 copies, so "3 train instances" is a single photo.
 
-**Not closed yet**: the classes in :data:`PENDING_DECISIONS` are kept as-is
-until the user decides from the visual sample in
-``models/checkpoints/car_parts/_muestra_clases/``.
+Closed 2026-09-29: the doubtful classes were decided by the user from the
+visual sample in ``models/checkpoints/car_parts/_muestra_clases/`` (see the
+"Decided from the visual sample" block). 29 final classes.
 """
 
 from __future__ import annotations
@@ -48,14 +48,14 @@ CLASS_MAP = {
     "left_fog_light": "fog_light",
     "right_fog_lights": "fog_light",
 
-    # Pending the user's decision (see PENDING_DECISIONS): kept unmerged.
-    "back_light": "back_light",
-    "fog_lights": "fog_lights",
-    "front_glass": "front_glass",
-    "windshield": "windshield",
-    "bumper": "bumper",
+    # Decided from the visual sample (user, 2026-09-29).
+    "back_light": None,              # inconsistent labels (rear window or bumper reflector)
+    "fog_lights": "fog_light",       # same part as left/right fog lights
+    "front_glass": "windshield",     # the windshield glass itself
+    "windshield": None,              # despite its name, the wipers: discarded
+    "bumper": "bumper",              # front bumper, kept apart from back_bumper
     "back_bumper": "back_bumper",
-    "front_mirror": "front_mirror",
+    "front_mirror": None,            # discarded
     "side_mirror": "side_mirror",
 
     # Unchanged (only typos/plurals fixed).
@@ -78,14 +78,5 @@ CLASS_MAP = {
     "wheel": "wheel",
 }
 
-#: Original classes whose final name is provisional, with the question to decide.
-PENDING_DECISIONS = {
-    "back_light": "merge into taillight?",
-    "fog_lights": "merge into fog_light?",
-    "front_glass": "same part as windshield?",
-    "windshield": "same part as front_glass?",
-    "bumper": "front bumper (keep apart from back_bumper)?",
-    "back_bumper": "keep apart from bumper?",
-    "front_mirror": "interior mirror (keep apart from side_mirror)?",
-    "side_mirror": "keep apart from front_mirror?",
-}
+#: Original classes whose final name is still provisional. Empty: the map is closed.
+PENDING_DECISIONS = {}
