@@ -134,3 +134,47 @@ lista completa. Los flags mas importantes (identicos para los dos modelos):
    Referencia ya medida: car_parts/v1 en el split test (16 imagenes) da
    AP@0.5:0.95 = 0.5389 y AP50 = 0.7689. La metrica vieja daba 0.7750, o sea
    seguia de cerca al AP50 pero nunca reportaba el AP@0.5:0.95 estricto.
+
+
+6) PARTES CON MASCARAS (car_parts/v2, entrada del modulo M3)
+   ---------------------------------------------------------------
+   Mismo dataset de partes, pero Mask R-CNN (cajas + mascaras). M3 necesita
+   las mascaras de partes para asignar cada dano a la parte con mayor
+   area(mascara_dano ∩ mascara_parte) / area(mascara_dano).
+   El best_model.pth de este modelo se elige por MASK AP (segm), no por box AP.
+   El config v1 (solo cajas, Faster R-CNN) sigue igual en car_parts/config.py.
+
+       ./venv_cuda/Scripts/python.exe -m src.detection.car_parts.train_masks \
+           --epochs 20 --output models/checkpoints/car_parts/v2
+
+   AUN NO SE HA ENTRENADO. Solo corrio un smoke test (2 epocas, 20 imagenes,
+   17 s, pico de GPU 2.25 GB) en models/checkpoints/car_parts/smoke_test_masks.
+
+
+7) VER EL AVANCE DE UN ENTRENAMIENTO (aplica a los tres entrenamientos)
+   ---------------------------------------------------------------
+   Todo entrenamiento escribe ademas en --output:
+       status.json    estado en vivo: epoca, batch, % de la epoca y del total,
+                      loss (total y por termino), LR, memoria GPU, ETA, mejor
+                      epoca hasta ahora. Se reescribe cada ~2 s.
+       train.log      todo lo que imprime el trainer, con fecha y hora, mas el
+                      error completo si truena.
+       run_info.json  args, commit de git (y si habia cambios sin commitear),
+                      versiones, GPU, semilla, tamanos del dataset e
+                      instancias por clase.
+
+   Desde OTRA terminal, mientras entrena:
+
+       ./venv_cuda/Scripts/python.exe -m src.detection.common.watch \
+           models/checkpoints/car_parts/v2
+
+   Se refresca cada 5 s (--interval N para cambiarlo, --once para verlo una
+   sola vez). Avisa si el status lleva mas de 2 min sin actualizarse (proceso
+   muerto o colgado) y si aparecen losses NaN/inf.
+
+   Flags nuevos del trainer:
+       --seed N               semilla (default 42; -1 = sin semilla). En GPU dos
+                              corridas con la misma semilla quedan muy cerca, no
+                              identicas (cuDNN no es determinista).
+       --select-by bbox|segm  que AP elige best_model.pth. Default: segm en
+                              car_parts/v2, bbox en los otros dos.
