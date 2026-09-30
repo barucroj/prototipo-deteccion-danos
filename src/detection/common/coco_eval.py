@@ -15,6 +15,7 @@ scratch is localized.
 from __future__ import annotations
 
 import contextlib
+import copy
 import io as _io
 
 import numpy as np
@@ -42,11 +43,16 @@ def load_coco_gt(gt):
 
     Pass the dataset's ``coco_gt`` dict when a class map rewrote the
     categories: the file on disk still has the original ids.
+
+    A dict is deep-copied: ``COCOeval`` with ``iouType="segm"`` rewrites each
+    ground-truth ``segmentation`` in place (polygons -> RLE), and the dataset
+    shares those annotation dicts, so without the copy the next epoch's
+    ``__getitem__`` would hit RLE and raise.
     """
     with contextlib.redirect_stdout(_io.StringIO()):
         if isinstance(gt, dict):
             coco = COCO()
-            coco.dataset = gt
+            coco.dataset = copy.deepcopy(gt)
             coco.createIndex()
         else:
             coco = COCO(gt)

@@ -224,7 +224,10 @@ Runbook completo: `docs/reentrenar_modelos.txt`.
   mAP@0.5 casero de respaldo, **no comparable** con COCO AP.
 - `coco_eval.py` — COCO AP (`bbox` y `segm`) vía pycocotools; **la métrica de la tesis**.
   `per_category_ap()` da AP por clase. `load_coco_gt()` acepta ruta o dict; el trainer evalúa
-  contra `valid_dataset.coco_gt`.
+  contra `valid_dataset.coco_gt`. **El dict se copia (deepcopy)**: `COCOeval` con
+  `iouType="segm"` reescribe in situ los polígonos del GT a RLE, y el dataset comparte esas
+  anotaciones; sin la copia, la época 2 fallaba con "RLE segmentation is not supported"
+  (pasó en la primera corrida de car_parts/v2, 2026-09-29).
 - `trainer.py` — CLI y loop compartidos. Flags relevantes:
   - `--seed N` (default 42; `-1` = sin semilla) → ver hallazgo (b).
   - `--select-by bbox|segm` — qué COCO AP@0.5:0.95 elige `best_model.pth`. Default de la
