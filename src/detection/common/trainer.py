@@ -89,6 +89,10 @@ def build_arg_parser(cfg) -> argparse.ArgumentParser:
     parser.add_argument("--select-by", default=cfg.default_select_by, choices=SELECT_BY,
                         help="COCO AP@0.5:0.95 that picks best_model.pth: 'bbox' (box AP) or "
                              "'segm' (mask AP, Mask R-CNN only). Default comes from the config.")
+    parser.add_argument("--freeze-bn", action="store_true", default=False,
+                        help="Keep every BatchNorm2d in eval mode while training, so the "
+                             "COCO-pretrained running stats are not re-estimated from "
+                             "batches of 2 images. Off by default (pending an A/B run).")
     parser.add_argument("--seed", type=int, default=42,
                         help="Seeds python, numpy and torch (shuffling, augmentation, head "
                              "init). Pass -1 to leave unseeded. cuDNN kernels are still not "
@@ -166,6 +170,7 @@ def run_training(cfg, args) -> float:
         "git": git_info(),
         "environment": environment_info(device),
         "amp": use_amp,
+        "freeze_bn": args.freeze_bn,
         "augmentation": repr(train_transforms) if train_transforms else None,
         "datasets": {"train": train_summary, "valid": dataset_summary(valid_dataset)},
     })
@@ -176,7 +181,8 @@ def run_training(cfg, args) -> float:
     log(f"Classes: {train_dataset.num_classes}  |  Arch: {args.arch}  |  Masks: {cfg.with_masks}")
     log(f"Device: {device}  |  AMP: {use_amp}  |  Metric: {args.metric}  |  "
         f"best_model by: {args.select_by} AP  |  Seed: {args.seed if args.seed >= 0 else 'none'}")
-    log(f"Augmentation: {train_transforms if train_transforms else 'off'}")
+    log(f"Augmentation: {train_transforms if train_transforms else 'off'}  |  "
+        f"Freeze BN stats: {args.freeze_bn}")
     log(f"Epochs: {args.epochs}  |  Batch size: {args.batch_size}  |  LR: {args.lr}"
         f"  |  LR step: {args.lr_step_size or 'none'}")
     if train_summary["classes_without_instances"]:
@@ -214,6 +220,7 @@ def run_training(cfg, args) -> float:
             "metric": args.metric,
             "select_by": args.select_by,
             "seed": args.seed,
+            "freeze_bn": args.freeze_bn,
             "augmented": bool(train_transforms),
             "epoch": epoch,
         }
@@ -241,7 +248,7 @@ def run_training(cfg, args) -> float:
 
             auditor.start_phase("train", len(train_loader))
             train_loss = train_one_epoch(model, optimizer, train_loader, device, scaler=scaler,
-                                         on_batch=auditor.on_batch)
+                                         on_batch=auditor.on_batch, freeze_bn=args.freeze_bn)
             loss_components = auditor.epoch_loss_components()
 
             val_map = val_map50 = None

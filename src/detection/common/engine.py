@@ -20,9 +20,11 @@ import torch
 from torchvision.ops import box_iou
 from tqdm import tqdm
 
+from src.detection.common.model import freeze_batchnorm_stats
+
 
 def train_one_epoch(model, optimizer, data_loader, device, scaler=None, max_norm: float = None,
-                    on_batch=None):
+                    on_batch=None, freeze_bn: bool = False):
     """Runs one training epoch. Returns the mean total loss across batches.
 
     Args:
@@ -35,8 +37,13 @@ def train_one_epoch(model, optimizer, data_loader, device, scaler=None, max_norm
             callback after each batch (``loss_components`` maps each loss
             term, e.g. ``loss_mask``, to its float value). The trainer uses it
             to keep the run's ``status.json`` current.
+        freeze_bn: If True, BatchNorm2d layers stay in eval mode (running
+            stats frozen) while the rest of the model trains; see
+            :func:`src.detection.common.model.freeze_batchnorm_stats`.
     """
     model.train()
+    if freeze_bn:
+        freeze_batchnorm_stats(model)
     total_loss = 0.0
     num_batches = 0
     use_amp = scaler is not None
