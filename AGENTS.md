@@ -173,7 +173,8 @@ falta capturar y anotar 20-40 pares propios marcando qué daños son nuevos en B
   por defecto; v1 con `M2_CHECKPOINT=...`) con **las clases del checkpoint** (aplica su
   `class_map` al GT y verifica que las categorías coinciden). Una sola pasada de inferencia:
   COCO AP de caja y máscara global y por clase (con instancias y "poco fiable" < 10),
-  figuras predicción/GT en dos secciones (7a máscaras, 7b cajas), y salida de M2 para M3 en
+  tiempo de inferencia (4b), figuras predicción/GT en dos secciones (7a máscaras, 7b cajas),
+  y salida de M2 para M3 en
   `tests/detection/outputsM2/<carpeta del checkpoint>/`: un JSON por imagen
   `{imagen, image_id, width, height, checkpoint, score_threshold, clases, partes: [{id,
   clase_parte, confianza, bbox [x1,y1,x2,y2], area_px, mascara: "masks/<img>_pNN.png"}]}` con
@@ -365,6 +366,12 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
     (AP75), no la detección a IoU 0.5. Solo 16 imágenes de test.
   - Peores clases en test (box AP): `step` 0.100 (1 instancia), `fog_light` 0.269 (6),
     `indicator_light` 0.359 (5), `back_bumper` 0.396 (8), todas "poco fiables".
+  - **Tiempo de inferencia** (RTX 3050, FP32, lote 1, medido en la sección 4b del notebook
+    v2, estable en dos corridas): imagen de 640×640 → modelo ~178 ms, total ~184 ms. Foto
+    del protocolo 4000×3000 → preparación ~36 ms, modelo ~265 ms, **salida ~250-370 ms**
+    (copiar a la CPU las máscaras a resolución completa, 12 MP por parte; es la fase más
+    variable, 90-1100 ms), total ~575-590 ms (mediana). Pico de GPU 4.07 GB con 12 MP.
+    Una inspección de 4 vistas ≈ 2.4 s de M2; un par A/B ≈ 4.7 s.
 - `car_parts/_muestra_clases/` — muestra visual (4 imágenes de train por clase dudosa, con
   máscaras y nombre) con la que se cerró el `class_map`. Una hoja de contacto por grupo.
 - `car_parts/_compare_v1_vs_v1/` — salida de `compare_versions` con v1 contra sí mismo en test.
