@@ -75,11 +75,15 @@ lista completa. Los flags mas importantes (identicos para todos):
        ./venv_cuda/Scripts/python.exe -m src.detection.car_parts.train_masks \
            --epochs 20 --output models/checkpoints/car_parts/v2
 
-   Estado: NO hay modelo v2 entrenado. Dos corridas interrumpidas (una de 17 s
-   y otra de 1 epoca completa) se movieron a car_parts/v2_interrumpido_smoke/;
-   car_parts/v2/ debe estar vacia o no existir antes de lanzar.
-   Tiempo medido en esa corrida: ~105 s por epoca (train + eval) -> 20 epocas
-   ~35 min. Pico de GPU 2.25 GB.
+   Estado: ENTRENADO el 2026-09-29 en models/checkpoints/car_parts/v2/ con el
+   comando de arriba (commit 895f096). 33 min, ~99 s por epoca, pico de GPU
+   2.25 GB. Mejor epoca 16 (val mask AP 0.6435). En test: box AP 0.6041,
+   mask AP 0.5779. Para reentrenar, usar otra carpeta (p. ej. car_parts/v3).
+   Corridas fallidas previas: car_parts/v2_interrumpido_smoke/ y
+   car_parts/v2_fallido_rle/ (bug ya corregido en 7bbf1b9).
+
+   Para revisar el modelo (AP por clase, figuras, salida de M2 con mascaras):
+   tests/detection/evaluate_test_set_v2.ipynb
 
    Val (32 imgs) tiene 5 clases sin instancias y test (16 imgs) 6: los AP de
    partes son indicativos.
@@ -110,8 +114,9 @@ lista completa. Los flags mas importantes (identicos para todos):
    ---------------------------------------------------------------
    models/checkpoints/car_parts/v1/ (20 epocas, sin augmentation). Su
    "val mAP@0.5 = 0.7878" es la metrica casera: NO es comparable con COCO AP.
-   Comparacion valida (test, notebook tests/detection/evaluate_test_set.ipynb):
-   AP@0.5:0.95 = 0.5389, AP50 = 0.7689.
+   Comparacion valida (COCO AP en test, con compare_versions o con el notebook
+   tests/detection/evaluate_test_set_v2.ipynb): AP@0.5:0.95 = 0.5389,
+   AP50 = 0.7689. El notebook viejo evaluate_test_set.ipynb NO calcula AP.
    Solo reentrenar v1 para reproducirlo, y siempre con --output nuevo.
 
 

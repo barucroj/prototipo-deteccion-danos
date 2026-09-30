@@ -67,7 +67,7 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
 | Pieza | Estado |
 |---|---|
 | M1 | **Parcial.** `specular_removal.py` funciona y tiene pruebas. `normalization.py` hace resize 512×512 + ImageNet (incompatible, ver abajo). Falta validación de formato/resolución, EXIF, metadatos, pipeline encadenado y pruebas. Ningún script de entrenamiento o inferencia lo usa. |
-| M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN) tiene config, entrypoint (`train_masks.py`) y `class_map` cerrado (29 clases finales), **pero no hay modelo entrenado**. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. |
+| M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN, 29 clases finales) **entrenado** el 2026-09-29 (ver Checkpoints): test box AP 0.6041, mask AP 0.5779; supera a v1 en AP de caja (+0.028, IC 95 % [+0.008, +0.047]) pero no en AP50. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. |
 | M3 | Hay modelo: `damage/v1` (val: bbox AP 0.5191, mask AP 0.5020, mejor época 11, sin augmentation). **No existe** el módulo de asignación a partes ni el JSON. |
 | M4 | No existe. |
 | Orquestador / Streamlit | No existen. |
@@ -85,8 +85,10 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
   `torch.cuda`, pero no activa `cudnn.deterministic` ni `torch.use_deterministic_algorithms`.
   Descríbase como "semilla fija", nunca como "reproducible".
 - **(c) mAP viejo de car_parts/v1 no comparable.** Su `val_map50 = 0.7878` es la métrica casera
-  (mAP@0.5, `engine.evaluate`), no COCO AP. La comparación válida de car_parts es en **test**
-  con `tests/detection/evaluate_test_set.ipynb`: v1 → AP 0.5389, AP50 0.7689.
+  (mAP@0.5, `engine.evaluate`), no COCO AP. La comparación válida de car_parts es COCO AP en
+  **test** (`compare_versions` o `tests/detection/evaluate_test_set_v2.ipynb`, que coinciden):
+  v1 → AP 0.5389, AP50 0.7689. El notebook viejo `evaluate_test_set.ipynb` **no calcula AP**
+  (solo conteos) y no es la fuente de ese número.
 - **(d) Splits de partes pequeños.** val = 32 imágenes con 5 clases sin instancias
   (`air_intake`, `left_windowark`, `right_glass`, `right_windowark`, `shield`); test = 16 con 6
   (`fog_lights`, `left_side_door`, `left_windowark`, `right_glass`, `right_windowark`, `shield`).
@@ -161,11 +163,20 @@ falta capturar y anotar 20-40 pares propios marcando qué daños son nuevos en B
   `matplotlib.colormaps[name].resampled(n)`, no `cm.get_cmap`.
 - `notebooks/demo_avances.ipynb` — demo de avances; importa `apply_clahe_rgb`,
   `resize_with_padding` y `specular_removal` solo para visualizar.
-- `tests/detection/evaluate_test_set.ipynb` — evalúa `car_parts/v1` en test y guarda, para las
-  primeras 6 imágenes, un JSON de M2 por imagen en `tests/detection/outputsM2/` (en
-  `.gitignore`): `{imagen, image_id, width, height, checkpoint, score_threshold,
-  partes: [{clase_parte, confianza, bbox, mascara: null}]}` con umbral 0.5. Es un prototipo
-  del formato de M2 en notebook, no un módulo.
+- `tests/detection/evaluate_test_set.ipynb` — **solo para v1**: carga test con las 47 clases
+  originales, cuenta predicciones contra GT (no calcula AP) y guarda JSON de M2 con
+  `mascara: null`. Con un checkpoint de v2 compara ids de clases distintas sin error: no usarlo
+  para v2.
+- `tests/detection/evaluate_test_set_v2.ipynb` — evaluación de un checkpoint de car_parts (v2
+  por defecto; v1 con `M2_CHECKPOINT=...`) con **las clases del checkpoint** (aplica su
+  `class_map` al GT y verifica que las categorías coinciden). Una sola pasada de inferencia:
+  COCO AP de caja y máscara global y por clase (con instancias y "poco fiable" < 10),
+  figuras predicción/GT con máscaras, y salida de M2 para M3 en
+  `tests/detection/outputsM2/<carpeta del checkpoint>/`: un JSON por imagen
+  `{imagen, image_id, width, height, checkpoint, score_threshold, clases, partes: [{id,
+  clase_parte, confianza, bbox [x1,y1,x2,y2], area_px, mascara: "masks/<img>_pNN.png"}]}` con
+  umbral 0.5. Variables de entorno: `M2_CHECKPOINT`, `M2_SPLIT`, `M2_DEVICE`. Guardado con las
+  salidas de la corrida sobre `car_parts/v2`. Sus números coinciden con `compare_versions`.
 - `tests/preprocessing/*_before_after.ipynb` — demos de M1.
 
 Las rutas en notebooks se resuelven relativas a la raíz del proyecto, no hardcodeadas.
@@ -322,7 +333,18 @@ es casi todo fondo. Selecciona por bbox AP salvo `--select-by segm`.
   1 época: bbox AP 0.3082, mask AP 0.2958, 105 s/época). No es un modelo usable.
 - `car_parts/v2_fallido_rle/` — primera corrida real de v2 (29 clases), falló en la época 2 por
   el bug de RLE ya corregido en `7bbf1b9`. Época 1 en val: box AP 0.487, mask AP 0.477.
-  `car_parts/v2/` no existe: queda libre para la corrida real.
+- `car_parts/v2/` — **modelo de partes vigente para M2/M3.** Mask R-CNN, 29 clases finales
+  (`class_map`), 20 épocas, lr 0.005 sin step, batch 2, AMP, augmentation, semilla 42,
+  `freeze_bn` off, selección por mask AP. Commit `895f096` (árbol limpio). 33 min (~99 s/época).
+  - Mejor época 16 (val): box AP 0.6664, mask AP 0.6435. Val se estanca desde la época ~6-8
+    (box AP 0.65-0.67) mientras el loss sigue bajando 0.53 → 0.27; sin step de LR.
+  - **Test** (16 imgs): box AP 0.6041 [IC 95 % 0.561-0.685], AP50 0.8043, AP75 0.7021;
+    mask AP 0.5779 [0.533-0.659], AP50 0.8047.
+  - Contra v1 mapeado a las mismas 29 clases (`v2/compare/compare_test.md`): box AP +0.0284
+    [+0.0075, +0.0473]; AP50 −0.0197 [−0.0535, +0.0140]. Mejora la precisión de localización
+    (AP75), no la detección a IoU 0.5. Solo 16 imágenes de test.
+  - Peores clases en test (box AP): `step` 0.100 (1 instancia), `fog_light` 0.269 (6),
+    `indicator_light` 0.359 (5), `back_bumper` 0.396 (8), todas "poco fiables".
 - `car_parts/_muestra_clases/` — muestra visual (4 imágenes de train por clase dudosa, con
   máscaras y nombre) con la que se cerró el `class_map`. Una hoja de contacto por grupo.
 - `car_parts/_compare_v1_vs_v1/` — salida de `compare_versions` con v1 contra sí mismo en test.
@@ -347,8 +369,7 @@ es casi todo fondo. Selecciona por bbox AP salvo `--select-by segm`.
 
 ## Plan de trabajo acordado (registrado, no ejecutado salvo donde se indica)
 0. ~~Cerrar el `class_map`~~ — hecho (29 clases).
-1. Entrenamientos: `car_parts/v2` (Mask R-CNN, con augmentation, carpeta nueva; comparar con
-   v1 usando `compare_versions` en test) y `damage/v2`
+1. Entrenamientos: ~~`car_parts/v2`~~ (hecho, ver Checkpoints) y `damage/v2`
    (augmentation, `--epochs 12 --lr-step-size 8`, `--output damage/v2`). Considerar una
    corrida A/B de BatchNorm en car_parts antes de fijar la receta.
 2. M3: asignación a partes + JSON, con pruebas.
