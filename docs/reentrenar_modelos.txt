@@ -48,6 +48,9 @@ lista completa. Los flags mas importantes (identicos para todos):
                           batches de 2 imagenes. Gamma/beta si siguen
                           aprendiendo. OFF por default: se decidira con una
                           corrida A/B en car_parts (misma semilla, con y sin).
+    --no-class-map        ignora el class_map de la config y entrena con las
+                          clases originales (solo aplica a car_parts v2, que
+                          por default usa src/detection/car_parts/class_map.py).
     --max-train-images N  limita el train set  (SOLO para pruebas rapidas)
     --max-val-images N    limita el val set    (SOLO para pruebas rapidas)
     --metric coco|simple  coco (default) = COCO AP estandar via pycocotools,
@@ -57,8 +60,15 @@ lista completa. Los flags mas importantes (identicos para todos):
 
 1) PARTES v2 — Mask R-CNN (la que usa M3)
    ---------------------------------------------------------------
-   327 imagenes efectivas de train (333 menos 6 sin anotaciones), 47 clases.
-   Todas las anotaciones son poligonos validos.
+   327 imagenes efectivas de train (333 menos 6 sin anotaciones; en realidad
+   111 fotos x 3 copias aumentadas por Roboflow). Todas las anotaciones son
+   poligonos validos.
+
+   CLASES: v2 aplica src/detection/car_parts/class_map.py a train, val y test:
+   izquierda/derecha fusionadas, 6 clases raras descartadas -> 33 clases
+   finales PROVISIONALES. NO ENTRENAR v2 hasta cerrar PENDING_DECISIONS en ese
+   archivo (se deciden con models/checkpoints/car_parts/_muestra_clases/).
+   El mapa aplicado queda en run_info.json y en el checkpoint.
 
        ./venv_cuda/Scripts/python.exe -m src.detection.car_parts.train_masks \
            --epochs 20 --output models/checkpoints/car_parts/v2
@@ -71,6 +81,27 @@ lista completa. Los flags mas importantes (identicos para todos):
 
    Val (32 imgs) tiene 5 clases sin instancias y test (16 imgs) 6: los AP de
    partes son indicativos.
+
+
+1b) COMPARAR v1 CONTRA v2 (despues de entrenar v2)
+   ---------------------------------------------------------------
+   La seleccion del mejor checkpoint de cada version se hace con val (lo hace
+   el trainer). El veredicto v1-vs-v2 se calcula en TEST:
+
+       ./venv_cuda/Scripts/python.exe -m src.detection.car_parts.compare_versions \
+           --v1 models/checkpoints/car_parts/v1/best_model.pth \
+           --v2 models/checkpoints/car_parts/v2/best_model.pth \
+           --split test --output models/checkpoints/car_parts/v2/compare
+
+   Escribe compare_test.json y compare_test.md: experimento A (v1 en 47 clases
+   vs v1 mapeado a las clases finales) y B (v1 mapeado vs v2, cajas, mas el
+   mask AP de v2), AP por clase con instancias, bootstrap pareado por imagen
+   (1000, semilla 0, IC 95%). Clases con <10 instancias: "poco fiable".
+   Con --split valid avisa que ese split no sirve para el veredicto.
+   Tarda ~20 s en test (16 imagenes) en la RTX 3050.
+
+   Chequeo ya hecho: v1 contra si mismo en test da diferencia B = 0 exacta
+   (models/checkpoints/car_parts/_compare_v1_vs_v1/).
 
 
 2) PARTES v1 — Faster R-CNN (referencia, ya entrenado)
@@ -181,6 +212,8 @@ lista completa. Los flags mas importantes (identicos para todos):
    src/detection/common/coco_dataset.py  lectura de COCO y rasterizado de
                                         poligonos a mascaras.
    src/detection/car_parts/config.py   CONFIG (v1) y MASK_CONFIG (v2).
+   src/detection/car_parts/class_map.py  clases originales -> clases finales.
+   src/detection/car_parts/compare_versions.py  comparacion v1 vs v2.
    src/detection/damage/config.py      rutas y defaults del modelo de danos.
 
    Para agregar otro detector: crea src/detection/<nombre>/ con un config.py

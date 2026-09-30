@@ -21,8 +21,14 @@ menciona siamesas: solo tenía una descripción genérica ("detectar tallones y 
      torchvision esperan RGB en [0,1] al tamaño original y hacen su propio resize (lado corto
      800, largo máx. 1333) y normalización dentro de `GeneralizedRCNNTransform`.
 2. **M2. Segmentación de partes** (`src/detection/car_parts/`)
-   - Segmentación de **instancias** con Mask R-CNN sobre Roboflow Car-Parts (47 clases).
+   - Segmentación de **instancias** con Mask R-CNN sobre Roboflow Car-Parts. Las 47 clases
+     originales se reducen con `src/detection/car_parts/class_map.py` (ver abajo).
    - Salida por imagen: lista de `{clase_parte, confianza, bbox, máscara}`.
+   - **Decisión (2026-09-29): cada par izquierda/derecha se fusiona en una sola clase**
+     (`left_front_door` + `right_front_door` → `front_door`, etc.). Consecuencia: el nombre de
+     la parte ya no dice el lado. M3 asigna cada daño a la **instancia** de parte con mayor
+     solapamiento, y M4 debe emparejar partes de A y B **por clase y posición en la imagen**,
+     no solo por nombre. Esto no está implementado todavía.
 3. **M3. Detección de daños** (`src/detection/damage/` + paquete propio para la lógica)
    - Mask R-CNN entrenada en CarDD (6 clases), detecta sobre la **imagen completa**, no sobre
      recortes por parte.
@@ -36,6 +42,8 @@ menciona siamesas: solo tenía una descripción genérica ("detectar tallones y 
        "solapamiento": 0.93, "pos_relativa": [0.41, 0.62]}]}
      ```
 4. **M4. Comparación antes/después** — **lógica determinista, no una red neuronal.**
+   - Empareja primero las partes de A y B por clase y posición en la imagen (izq./der. ya no
+     se distinguen por nombre).
    - Dentro de cada parte, empareja daños de A y B del mismo tipo con `pos_relativa` cercana
      (umbral de distancia) usando el método húngaro (`scipy.optimize.linear_sum_assignment`),
      no greedy.
@@ -59,7 +67,7 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
 | Pieza | Estado |
 |---|---|
 | M1 | **Parcial.** `specular_removal.py` funciona y tiene pruebas. `normalization.py` hace resize 512×512 + ImageNet (incompatible, ver abajo). Falta validación de formato/resolución, EXIF, metadatos, pipeline encadenado y pruebas. Ningún script de entrenamiento o inferencia lo usa. |
-| M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN) tiene config y entrypoint (`train_masks.py`) commiteados, **pero no hay modelo entrenado**. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. |
+| M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN) tiene config, entrypoint (`train_masks.py`) y `class_map` (33 clases finales provisionales), **pero no hay modelo entrenado**. El `class_map` **no está cerrado**: 8 clases esperan decisión del usuario (`PENDING_DECISIONS`); no entrenar v2 antes. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. |
 | M3 | Hay modelo: `damage/v1` (val: bbox AP 0.5191, mask AP 0.5020, mejor época 11, sin augmentation). **No existe** el módulo de asignación a partes ni el JSON. |
 | M4 | No existe. |
 | Orquestador / Streamlit | No existen. |
@@ -89,6 +97,14 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
   `models/checkpoints/` está en `.gitignore`: no hay recuperación. `damage/train.py` y
   `car_parts/train.py` escriben por defecto en `damage/v1` y `car_parts/v1` — **siempre pasar
   `--output` a una carpeta nueva**.
+- **(f) Train de partes = 111 fotos × 3 copias aumentadas por Roboflow** (ruido "sal",
+  recortes negros; mismo prefijo antes de `_jpg.rf.`). Los conteos de train están inflados ×3:
+  "3 instancias" es una sola foto. valid (32) y test (16) no tienen copias, y ninguna foto base
+  se repite entre splits (sin fuga).
+- **(g) AP de v1 en test según el conjunto de clases.** Sobre las 47 clases (41 con instancias
+  en test): AP 0.5389 / AP50 0.7689, reproducido exactamente por `compare_versions`.
+  Excluyendo las clases que el `class_map` descarta (en test solo `air_intake`, 1 instancia,
+  AP 0): 0.5524 / 0.7881. Mapeado a las 33 clases finales: 0.5478 / 0.7982.
 
 ## Métricas que pide el protocolo
 Precision, Recall, F1, mAP, IoU y Accuracy. Para los detectores (M2, M3), COCO AP vía
@@ -190,12 +206,21 @@ Runbook completo: `docs/reentrenar_modelos.txt`.
 - `coco_dataset.py` — `CocoDetectionDataset`; `image_id` es el id COCO original; ids de
   categoría usados tal cual (0 = fondo), lo que requiere ids contiguos desde 1. Máscaras
   rasterizadas con `cv2.fillPoly`; RLE lanza `TypeError`. `skip_empty=True` por defecto.
+  - `class_map=` (nombre original → nombre final o `None`) se aplica al cargar vía
+    `apply_class_map()`: renombra, fusiona y descarta; ids finales = nombres finales en orden
+    alfabético → 1..N (`final_categories()`). Falla si el mapa no cubre exactamente las
+    categorías del archivo. Las imágenes que quedan sin anotaciones se tratan como vacías y se
+    reportan en `class_map_stats["images_emptied"]` (hoy 0 en los tres splits).
+  - `dataset.coco_gt` es el dict COCO (remapeado si hay mapa): **usarlo como ground truth de
+    COCOeval**, no el JSON en disco, cuyos ids ya no coinciden con los del modelo.
+  - `build_dataset(cfg, split, use_class_map=True)` aplica `cfg.class_map`.
 - `model.py` — `build_model(num_classes, arch)` → `fasterrcnn_resnet50_fpn_v2` o
   `maskrcnn_resnet50_fpn_v2`, preentrenados en COCO con cabezas reemplazadas.
 - `engine.py` — `train_one_epoch()` (AMP opcional, callback `on_batch`) y `evaluate()`,
   mAP@0.5 casero de respaldo, **no comparable** con COCO AP.
 - `coco_eval.py` — COCO AP (`bbox` y `segm`) vía pycocotools; **la métrica de la tesis**.
-  `per_category_ap()` da AP por clase.
+  `per_category_ap()` da AP por clase. `load_coco_gt()` acepta ruta o dict; el trainer evalúa
+  contra `valid_dataset.coco_gt`.
 - `trainer.py` — CLI y loop compartidos. Flags relevantes:
   - `--seed N` (default 42; `-1` = sin semilla) → ver hallazgo (b).
   - `--select-by bbox|segm` — qué COCO AP@0.5:0.95 elige `best_model.pth`. Default de la
@@ -206,10 +231,14 @@ Runbook completo: `docs/reentrenar_modelos.txt`.
     Se eligió `eval()` y no `FrozenBatchNorm2d` porque este último cambia las claves del
     `state_dict` y rompería `load_checkpoint`. Queda en `run_info.json` y en el checkpoint.
     Probado en `tests/detection/test_freeze_bn.py`.
+  - `--no-class-map` — ignora `cfg.class_map` y entrena con las categorías originales (para
+    reproducir las 47 clases de v1). El mapa aplicado (o `None`) y sus estadísticas por split
+    quedan en `run_info.json` (`class_map`, `class_map_stats`) y el mapa en el checkpoint
+    (`class_map`); el payload lo arma `build_checkpoint_payload()`.
   - `--eval-every`, `--lr-step-size`, `--max-train-images`, `--max-val-images`, `--arch`,
     `--no-amp`, `--no-augment`, `--hflip-prob`, `--jitter-prob`, `--metric coco|simple`.
   - Checkpoints autodescriptivos: `num_classes`, `categories`, `arch`, `with_masks`,
-    `detector`, `metric`, `select_by`, `seed`, `freeze_bn`, `augmented`, `epoch`, `val_map`, `val_map50`,
+    `class_map`, `detector`, `metric`, `select_by`, `seed`, `freeze_bn`, `augmented`, `epoch`, `val_map`, `val_map50`,
     `coco`. Los anteriores al refactor no tienen `arch` y se cargan como `faster_rcnn`.
 - `audit.py` — `RunAuditor`. Cada corrida escribe en `--output`:
   - `run_info.json` (una vez): args, config, commit de git + si el árbol estaba sucio,
@@ -230,9 +259,33 @@ Runbook completo: `docs/reentrenar_modelos.txt`.
   imágenes anotadas. No produce el JSON de M2 ni de M3.
 
 ### `car_parts/` — M2
-Dataset #2; id 0 excluido → 48 clases. `CONFIG` (v1, Faster R-CNN, solo cajas) se conserva
-para reproducir v1. `MASK_CONFIG` (v2): `with_masks=True`, `arch="mask_rcnn"`, salida por
-defecto `car_parts/v2`, selección por mask AP. Entrenar con `train_masks.py`.
+Dataset #2; id 0 excluido → 47 clases originales. `CONFIG` (v1, Faster R-CNN, solo cajas,
+sin `class_map`) se conserva para reproducir v1. `MASK_CONFIG` (v2): `with_masks=True`,
+`arch="mask_rcnn"`, salida por defecto `car_parts/v2`, selección por mask AP y
+`class_map=CLASS_MAP`. Entrenar con `train_masks.py`.
+
+- `class_map.py` — `CLASS_MAP`, tabla **por nombre** (auditable) de las 47 clases originales
+  a su clase final o `None`. Hoy: 6 descartadas (<10 instancias en train: `air_intake`,
+  `left_side_door`, `left_windowark`, `right_windowark`, `right_glass`, `shield`), 8 pares
+  izq./der. fusionados (`front_door`, `back_door`, `front_door_glass`, `back_door_glass`,
+  `quarter_glass`, `headlight`, `taillight`, `fog_light`), `side_steps` → `side_step`, el
+  resto igual → **33 clases finales provisionales**. `PENDING_DECISIONS` lista las 8 que el
+  usuario decide viendo `models/checkpoints/car_parts/_muestra_clases/`: `back_light` (¿a
+  `taillight`?), `fog_lights` (¿a `fog_light`?), `front_glass`/`windshield`,
+  `bumper`/`back_bumper`, `front_mirror`/`side_mirror`. Mientras tanto quedan sin fusionar.
+  Observado en la muestra: `back_light` está anotado de forma inconsistente (a veces el
+  medallón trasero, a veces un reflejante en la defensa).
+- `compare_versions.py` — `python -m src.detection.car_parts.compare_versions --v1 V1.pth
+  --v2 V2.pth --split test --output DIR`. Experimento A: v1 en sus clases originales contra v1
+  con predicciones mapeadas por el `class_map` (NMS dentro de cada clase final, IoU 0.5).
+  Experimento B: v1 mapeado contra v2, mismas imágenes y clases finales, más el mask AP de v2.
+  AP y AP50 promediados solo sobre las clases del experimento (`params.catIds`), AP por clase
+  con instancias, bootstrap pareado por imagen (1000, semilla 0, IC 95 % percentil) del AP de
+  cada modelo y de las diferencias; clases con <10 instancias marcadas "poco fiable". Escribe
+  `compare_{split}.json` y `.md`. **Selección con val, veredicto con test**: con `--split valid`
+  lo advierte. Reimplementa `COCOeval.accumulate` con pesos por imagen porque
+  `COCOeval.evaluate` elimina `imgIds` repetidos; las pruebas verifican igualdad exacta con
+  pycocotools (bbox y segm). Probado con v1 contra sí mismo en test: diferencia B = 0 exacta.
 
 ### `damage/` — M3 (solo el detector)
 Dataset #1 (CarDD), 7 clases. Mask R-CNN porque un rayón es largo, delgado y diagonal: su caja
@@ -256,6 +309,9 @@ es casi todo fondo. Selecciona por bbox AP salvo `--select-by segm`.
 - `car_parts/v2_interrumpido_smoke/` — dos corridas de v2 interrumpidas y mezcladas (17 s, y
   1 época: bbox AP 0.3082, mask AP 0.2958, 105 s/época). No es un modelo usable.
   `car_parts/v2/` no existe: queda libre para la corrida real.
+- `car_parts/_muestra_clases/` — muestra visual (4 imágenes de train por clase dudosa, con
+  máscaras y nombre) para cerrar `PENDING_DECISIONS`. Una hoja de contacto por grupo.
+- `car_parts/_compare_v1_vs_v1/` — salida de `compare_versions` con v1 contra sí mismo en test.
 - `damage/v1/` — Mask R-CNN, 12 épocas, `--lr-step-size 8`, AMP, batch 2, **sin
   augmentation**, 315 min. Seleccionado por bbox AP; mejor época 11 (LR 0.0005, deducido del
   StepLR; `metrics.json` de v1 no guarda LR), que también es la mejor por mask AP.
@@ -270,12 +326,15 @@ es casi todo fondo. Selecciona por bbox AP salvo `--select-by segm`.
 
 ## Pruebas
 `tests/detection/` (`test_coco_dataset.py`, `test_model.py`, `test_config.py`,
-`test_coco_eval.py`, `test_transforms.py`, `test_audit.py`, `test_freeze_bn.py`) y
+`test_coco_eval.py`, `test_transforms.py`, `test_audit.py`, `test_freeze_bn.py`,
+`test_class_map.py`, `test_compare_versions.py`) y
 `tests/preprocessing/test_specular_removal.py`. Resultado actual: ver `pytest -q`.
 `tests/detection/manual_inference.py` es un demo con GUI, no se colecta.
 
 ## Plan de trabajo acordado (registrado, no ejecutado salvo donde se indica)
-1. Entrenamientos: `car_parts/v2` (Mask R-CNN, con augmentation, carpeta nueva) y `damage/v2`
+0. Cerrar `PENDING_DECISIONS` del `class_map` (el usuario, con la muestra visual).
+1. Entrenamientos: `car_parts/v2` (Mask R-CNN, con augmentation, carpeta nueva; comparar con
+   v1 usando `compare_versions` en test) y `damage/v2`
    (augmentation, `--epochs 12 --lr-step-size 8`, `--output damage/v2`). Considerar una
    corrida A/B de BatchNorm en car_parts antes de fijar la receta.
 2. M3: asignación a partes + JSON, con pruebas.
