@@ -1,12 +1,18 @@
 """Manual, interactive check of a trained detector checkpoint.
 
 Opens a native file-picker window so you can choose any photo on your PC,
-runs a detector on it, and shows the result with predicted boxes, labels and
-(for the damage model) masks drawn on top.
+runs a detector on it, and shows the result with predicted boxes, labels and,
+for Mask R-CNN checkpoints, masks drawn on top.
 
-Works with either detector: checkpoints saved by the train CLIs record their
-own ``arch`` and ``categories``, so the same script handles the car-parts
-Faster R-CNN and the damage Mask R-CNN without being told which is which.
+Works with any checkpoint saved by the train CLIs: they record their own
+``arch`` and ``categories``, so the same script handles car_parts v2 (Mask
+R-CNN, 29 final classes from the class map; the default), car_parts v1
+(Faster R-CNN, boxes only, 47 original classes) and the damage Mask R-CNN
+without being told which is which.
+
+The result window is resizable and opens scaled to fit the screen, so a
+full-resolution phone photo is shown whole (the drawing itself is at the
+original resolution).
 
 Run directly — this opens GUI windows, so it is NOT a pytest test and is not
 collected by `pytest`/`python -m pytest tests/`:
@@ -34,21 +40,39 @@ from src.detection.common.visualize import draw_detections  # noqa: E402
 # against the project root, so this stays valid regardless of where you run
 # the script from. Point it at any checkpoint saved by a train CLI, e.g.
 # models/checkpoints/damage/v1/best_model.pth for the damage detector.
-DEFAULT_CHECKPOINT = os.path.join("models", "checkpoints", "car_parts", "v1", "best_model.pth")
+DEFAULT_CHECKPOINT = os.path.join("models", "checkpoints", "car_parts", "v2", "best_model.pth")
 
-# Minimum confidence score for a detection to be drawn/reported.
-SCORE_THRESHOLD = 0.3
+# Minimum confidence score for a detection to be drawn/reported. Stricter than
+# the 0.5 of tests/detection/parts-segmentation/evaluate_test_set_v2.ipynb.
+SCORE_THRESHOLD = 0.7
+
+# Fraction of the screen the result window may take when it opens.
+SCREEN_FRACTION = 0.85
+
+WINDOW_NAME = "Detections (press any key to close)"
 
 
-def pick_image_path() -> str:
+def pick_image_path():
+    """Ask for an image; also return the screen size, read from the same Tk root."""
     root = tk.Tk()
     root.withdraw()
+    screen = (root.winfo_screenwidth(), root.winfo_screenheight())
     path = filedialog.askopenfilename(
         title="Select an image to run the detector on",
         filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp"), ("All files", "*.*")],
     )
     root.destroy()
-    return path
+    return path, screen
+
+
+def fit_to_screen(width: int, height: int, screen_w: int, screen_h: int,
+                  fraction: float = SCREEN_FRACTION):
+    """Window size that keeps the aspect ratio and fits ``fraction`` of the screen.
+
+    Never enlarges: an image smaller than that is shown at its own size.
+    """
+    scale = min(1.0, fraction * screen_w / width, fraction * screen_h / height)
+    return max(1, int(width * scale)), max(1, int(height * scale))
 
 
 def main():
@@ -60,7 +84,7 @@ def main():
         print(f"Checkpoint not found: {checkpoint_path}")
         return
 
-    image_path = pick_image_path()
+    image_path, (screen_w, screen_h) = pick_image_path()
     if not image_path:
         print("No image selected.")
         return
@@ -91,7 +115,13 @@ def main():
 
     annotated = draw_detections(image_bgr.copy(), boxes, labels, scores, categories, masks=masks)
 
-    cv2.imshow("Detections (press any key to close)", annotated)
+    height, width = annotated.shape[:2]
+    win_w, win_h = fit_to_screen(width, height, screen_w, screen_h)
+    print(f"Image {width}x{height}, window {win_w}x{win_h} (resizable)")
+
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    cv2.resizeWindow(WINDOW_NAME, win_w, win_h)
+    cv2.imshow(WINDOW_NAME, annotated)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 

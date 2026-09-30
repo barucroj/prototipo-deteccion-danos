@@ -86,7 +86,7 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
   Descríbase como "semilla fija", nunca como "reproducible".
 - **(c) mAP viejo de car_parts/v1 no comparable.** Su `val_map50 = 0.7878` es la métrica casera
   (mAP@0.5, `engine.evaluate`), no COCO AP. La comparación válida de car_parts es COCO AP en
-  **test** (`compare_versions` o `tests/detection/evaluate_test_set_v2.ipynb`, que coinciden):
+  **test** (`compare_versions` o `tests/detection/parts-segmentation/evaluate_test_set_v2.ipynb`, que coinciden):
   v1 → AP 0.5389, AP50 0.7689. El notebook viejo `evaluate_test_set.ipynb` **no calcula AP**
   (solo conteos) y no es la fuente de ese número.
 - **(d) Splits de partes pequeños.** val = 32 imágenes con 5 clases sin instancias
@@ -96,9 +96,11 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
 - **(e) Reentrenar sobre la misma carpeta pierde el anterior.** `best_model.pth` se sobrescribe
   al terminar la primera época; `last_model.pth`, `metrics.json`, `status.json` y
   `run_info.json` se reemplazan; `train.log` se **anexa** (quedan corridas mezcladas).
-  `models/checkpoints/` está en `.gitignore`: no hay recuperación. `damage/train.py` y
-  `car_parts/train.py` escriben por defecto en `damage/v1` y `car_parts/v1` — **siempre pasar
-  `--output` a una carpeta nueva**.
+  `models/checkpoints/` está en `.gitignore`: no hay recuperación. `car_parts/train.py`
+  escribe por defecto en `car_parts/v1`; `damage/train.py` en `damage/v2` y `train_masks.py`
+  en `car_parts/v2` (las dos ya existen o existirán) — **siempre pasar `--output` a una
+  carpeta nueva**. `scripts/train_damage_v2.ps1` se niega a arrancar si la carpeta ya tiene
+  `best_model.pth`.
 - **(f) Train de partes = 111 fotos × 3 copias aumentadas por Roboflow** (ruido "sal",
   recortes negros; mismo prefijo antes de `_jpg.rf.`). Los conteos de train están inflados ×3:
   "3 instancias" es una sola foto. valid (32) y test (16) no tienen copias, y ninguna foto base
@@ -163,11 +165,11 @@ falta capturar y anotar 20-40 pares propios marcando qué daños son nuevos en B
   `matplotlib.colormaps[name].resampled(n)`, no `cm.get_cmap`.
 - `notebooks/demo_avances.ipynb` — demo de avances; importa `apply_clahe_rgb`,
   `resize_with_padding` y `specular_removal` solo para visualizar.
-- `tests/detection/evaluate_test_set.ipynb` — **solo para v1**: carga test con las 47 clases
+- `tests/detection/parts-segmentation/evaluate_test_set.ipynb` — **solo para v1**: carga test con las 47 clases
   originales, cuenta predicciones contra GT (no calcula AP) y guarda JSON de M2 con
   `mascara: null`. Con un checkpoint de v2 compara ids de clases distintas sin error: no usarlo
   para v2.
-- `tests/detection/evaluate_test_set_v2.ipynb` — evaluación de un checkpoint de car_parts (v2
+- `tests/detection/parts-segmentation/evaluate_test_set_v2.ipynb` — evaluación de un checkpoint de car_parts (v2
   por defecto; v1 con `M2_CHECKPOINT=...`) con **las clases del checkpoint** (aplica su
   `class_map` al GT y verifica que las categorías coinciden). Una sola pasada de inferencia:
   COCO AP de caja y máscara global y por clase (con instancias y "poco fiable" < 10),
@@ -242,7 +244,8 @@ Runbook completo: `docs/reentrenar_modelos.txt`.
 - `trainer.py` — CLI y loop compartidos. Flags relevantes:
   - `--seed N` (default 42; `-1` = sin semilla) → ver hallazgo (b).
   - `--select-by bbox|segm` — qué COCO AP@0.5:0.95 elige `best_model.pth`. Default de la
-    config: `segm` en `car_parts` v2 (`MASK_CONFIG`), `bbox` en `car_parts` v1 y en `damage`.
+    config: `segm` en `car_parts` v2 (`MASK_CONFIG`) y en `damage` (desde 2026-09-30),
+    `bbox` en `car_parts` v1.
     `validate_args()` rechaza `segm` sin máscaras o con `--metric simple`.
   - `--freeze-bn` (default off) — pone las `BatchNorm2d` en `eval()` tras cada
     `model.train()` (`model.freeze_batchnorm_stats`, llamado en `engine.train_one_epoch`).
@@ -312,7 +315,22 @@ sin `class_map`) se conserva para reproducir v1. `MASK_CONFIG` (v2): `with_masks
 
 ### `damage/` — M3 (solo el detector)
 Dataset #1 (CarDD), 7 clases. Mask R-CNN porque un rayón es largo, delgado y diagonal: su caja
-es casi todo fondo. Selecciona por bbox AP salvo `--select-by segm`.
+es casi todo fondo. Desde 2026-09-30 la config selecciona `best_model.pth` por **mask AP**
+(`default_select_by="segm"`, porque M3 usa las máscaras de daño) y su salida por defecto es
+`damage/v2` (antes `damage/v1`, que un `damage.train` sin `--output` sobrescribía).
+
+**Lanzar damage/v2**: `powershell -ExecutionPolicy Bypass -File scripts/train_damage_v2.ps1`.
+Corre `damage.train --epochs 12 --lr-step-size 8 --select-by segm --output
+models/checkpoints/damage/v2` (augmentation por defecto) y abre en otra ventana el mismo
+monitor que car_parts (`common.watch`). Parámetros: `-Output`, `-Epochs`, `-LrStepSize`,
+`-NoWatch`, `-Extra` (flags extra para el trainer). Se niega si `-Output` ya tiene
+`best_model.pth` y avisa si el árbol tiene cambios sin commitear.
+
+Auditoría de CarDD (2026-09-30): sin archivos faltantes, tamaños coherentes con el JSON, un
+polígono válido por anotación, sin máscaras vacías ni cajas inválidas, sin imágenes vacías.
+Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edición):
+`test/001843` ≈ `train/000457` y `val/000790` ≈ `train/000473` — fuga despreciable, anotada.
+`crack` es 39 % objetos pequeños (<32² px), lo que explica su AP bajo en v1.
 
 ### Pendiente
 - **M3**: asignación daño→parte (umbral 0.5), `pos_relativa`, JSON + PNGs, como paquete propio

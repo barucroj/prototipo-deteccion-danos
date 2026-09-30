@@ -22,8 +22,8 @@ IMPORTANTE 2: cada entrenamiento va en una carpeta --output NUEVA.
    best_model.pth, se reemplazan last_model.pth, metrics.json, status.json y
    run_info.json, y train.log queda con las dos corridas mezcladas.
    models/checkpoints/ no esta en git: lo sobrescrito NO se recupera.
-   OJO con los defaults: car_parts.train escribe en car_parts/v1 y
-   damage.train en damage/v1 (los modelos buenos actuales) si no pasas --output.
+   OJO con los defaults: car_parts.train escribe en car_parts/v1 (el modelo v1)
+   si no pasas --output. damage.train ya escribe por default en damage/v2.
 
 Todo se controla con flags, no hace falta editar codigo. Con --help ves la
 lista completa. Los flags mas importantes (identicos para todos):
@@ -83,7 +83,7 @@ lista completa. Los flags mas importantes (identicos para todos):
    car_parts/v2_fallido_rle/ (bug ya corregido en 7bbf1b9).
 
    Para revisar el modelo (AP por clase, figuras, salida de M2 con mascaras):
-   tests/detection/evaluate_test_set_v2.ipynb
+   tests/detection/parts-segmentation/evaluate_test_set_v2.ipynb
 
    Val (32 imgs) tiene 5 clases sin instancias y test (16 imgs) 6: los AP de
    partes son indicativos.
@@ -115,19 +115,30 @@ lista completa. Los flags mas importantes (identicos para todos):
    models/checkpoints/car_parts/v1/ (20 epocas, sin augmentation). Su
    "val mAP@0.5 = 0.7878" es la metrica casera: NO es comparable con COCO AP.
    Comparacion valida (COCO AP en test, con compare_versions o con el notebook
-   tests/detection/evaluate_test_set_v2.ipynb): AP@0.5:0.95 = 0.5389,
+   tests/detection/parts-segmentation/evaluate_test_set_v2.ipynb): AP@0.5:0.95 = 0.5389,
    AP50 = 0.7689. El notebook viejo evaluate_test_set.ipynb NO calcula AP.
    Solo reentrenar v1 para reproducirlo, y siempre con --output nuevo.
 
 
 3) DANOS v2 — Mask R-CNN con augmentation
    ---------------------------------------------------------------
-   2816 imagenes de train, 810 de val, 6 clases. Mismos hiperparametros que v1:
+   2816 imagenes de train, 810 de val, 6 clases. Mismos hiperparametros que v1,
+   con augmentation y best_model.pth elegido por MASK AP (default de la config
+   desde 2026-09-30; M3 usa las mascaras de dano).
+
+   Forma recomendada (PowerShell, desde la raiz del proyecto): abre el monitor
+   en otra ventana y entrena en la actual.
+
+       powershell -ExecutionPolicy Bypass -File scripts\train_damage_v2.ps1
+
+   Equivalente a mano:
 
        ./venv_cuda/Scripts/python.exe -m src.detection.damage.train \
-           --epochs 12 --lr-step-size 8 --output models/checkpoints/damage/v2
+           --epochs 12 --lr-step-size 8 --select-by segm \
+           --output models/checkpoints/damage/v2
+       ./venv_cuda/Scripts/python.exe -m src.detection.common.watch \
+           models/checkpoints/damage/v2          (en otra terminal)
 
-   Para seleccionar por mask AP en vez de bbox AP, agregar --select-by segm.
    Para una comparacion estricta contra v1 (que no tenia augmentation),
    agregar --no-augment.
 
