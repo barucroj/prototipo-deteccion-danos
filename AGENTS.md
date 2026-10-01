@@ -386,6 +386,11 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
   - Curva: meseta ~0.45 en épocas 4-8; la bajada de LR en la 8 la sube a ~0.51; plana desde
     la 9. Más épocas con esta receta no ayudan.
 - `damage/smoke_test/` — prueba de pipeline.
+- `damage/v2_corrupta/` — primer intento de damage/v2 (2026-10-01), interrumpido a mano en la
+  validación de la época 1 tras 2 h 16 min, unas 5× más lento de lo esperado (~28 min/época).
+  Sin error en el log ni checkpoints; la causa probable es la laptop en suspensión o con
+  energía limitada. Para detectarlo a tiempo: el ETA del monitor en los primeros minutos debe
+  rondar 5.5 h en total.
 
 ## Pruebas
 `tests/detection/` (`test_coco_dataset.py`, `test_model.py`, `test_config.py`,
