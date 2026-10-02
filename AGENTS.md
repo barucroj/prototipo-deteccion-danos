@@ -68,7 +68,7 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
 |---|---|
 | M1 | **Parcial.** `specular_removal.py` funciona y tiene pruebas. `normalization.py` hace resize 512×512 + ImageNet (incompatible, ver abajo). Falta validación de formato/resolución, EXIF, metadatos, pipeline encadenado y pruebas. Ningún script de entrenamiento o inferencia lo usa. |
 | M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN, 29 clases finales) **entrenado** el 2026-09-29 (ver Checkpoints): test box AP 0.6041, mask AP 0.5779; supera a v1 en AP de caja (+0.028, IC 95 % [+0.008, +0.047]) pero no en AP50. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. |
-| M3 | Hay modelo: `damage/v1` (val: bbox AP 0.5191, mask AP 0.5020, mejor época 11, sin augmentation). **No existe** el módulo de asignación a partes ni el JSON. |
+| M3 | Modelo vigente: `damage/v2` (test: box AP 0.5275, mask AP 0.5075; frente a `damage/v1` las diferencias no son distinguibles del ruido, ver Checkpoints). **No existe** el módulo de asignación a partes ni el JSON. |
 | M4 | No existe. |
 | Orquestador / Streamlit | No existen. |
 | Pares A/B con ground truth | No existen (ver "Gap conocido"). |
@@ -180,6 +180,22 @@ falta capturar y anotar 20-40 pares propios marcando qué daños son nuevos en B
   clase_parte, confianza, bbox [x1,y1,x2,y2], area_px, mascara: "masks/<img>_pNN.png"}]}` con
   umbral 0.5. Variables de entorno: `M2_CHECKPOINT`, `M2_SPLIT`, `M2_DEVICE`. Guardado con las
   salidas de la corrida sobre `car_parts/v2`. Sus números coinciden con `compare_versions`.
+- `tests/detection/damage-segmentation/evaluate_damage_test_set.ipynb` — lo mismo para el
+  detector de daños (`M3_CHECKPOINT`, default `damage/v2`; `M3_REFERENCE`, default `damage/v1`,
+  vacío para no comparar; `M3_SPLIT`, `M3_DEVICE`): COCO AP de caja/máscara global, por tamaño
+  y por clase; tiempo de inferencia (4b); curva de entrenamiento contra la referencia (7);
+  comparación en las mismas imágenes con bootstrap pareado e IC 95 % (8, usa las funciones de
+  `compare_versions`); figuras de máscaras (9a) y cajas (9b) con una imagen por clase; y salida
+  cruda del detector en `tests/detection/outputsM3/<carpeta>/` (en `.gitignore`): un JSON por
+  imagen `{imagen, image_id, width, height, checkpoint, score_threshold, danos: [{id, tipo,
+  confianza, bbox, area_px, mascara}]}` + PNG por daño, sin `parte`/`solapamiento`/
+  `pos_relativa` (el módulo de asignación de M3 no existe). Reproduce los números de test de v1.
+- `tests/detection/parts-segmentation/manual_inference.py` y
+  `tests/detection/damage-segmentation/manual_inference.py` — demos con GUI (selector de
+  archivo, ventana ajustada a la pantalla), no se colectan. Partes: default `car_parts/v2`,
+  umbral 0.7. Daños: default `damage/v2`, umbral 0.5, lista cada daño con su área de máscara.
+  Ambos buscan la raíz del proyecto subiendo hasta `src/` (el de partes se rompió al moverlo
+  cuando la calculaba por profundidad).
 - `tests/preprocessing/*_before_after.ipynb` — demos de M1.
 
 Las rutas en notebooks se resuelven relativas a la raíz del proyecto, no hardcodeadas.
@@ -386,6 +402,25 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
   - Curva: meseta ~0.45 en épocas 4-8; la bajada de LR en la 8 la sube a ~0.51; plana desde
     la 9. Más épocas con esta receta no ayudan.
 - `damage/smoke_test/` — prueba de pipeline.
+- `damage/v2/` — **modelo de daños vigente.** Mask R-CNN, 12 épocas, `--lr-step-size 8`, AMP,
+  batch 2, augmentation, semilla 42, selección por mask AP. Commit `df5948c` (árbol limpio).
+  4.6 h (~20-28 min/época).
+  - Val: mejor época 10, box AP 0.5297, mask AP 0.5124 (v1: 0.5191 / 0.5020). Misma forma de
+    curva que v1: meseta ~0.45 en épocas 4-8, salto con la bajada de LR, plano desde la 9. El
+    loss de entrenamiento queda más alto que en v1 (0.296 contra 0.202 en la época 12): efecto
+    esperado de la augmentation.
+  - **Test** (374 imgs): box AP 0.5275, AP50 0.7297, AP75 0.5736; mask AP 0.5075, AP50 0.7066.
+    APs/APm/APl caja 0.354 / 0.291 / 0.540.
+  - **Contra v1 en test, bootstrap pareado (1000, IC 95 %)**: box AP −0.0056 [−0.028, +0.020];
+    box AP50 +0.016 [−0.015, +0.048]; mask AP +0.0125 [−0.006, +0.033]; mask AP50 +0.024
+    [−0.006, +0.054]. **Ninguna diferencia es distinguible del ruido**: la augmentation no
+    mejoró el detector de forma demostrable.
+  - Por clase (caja, v1 → v2): glass shatter 0.867 → 0.840, tire flat 0.837 → 0.798, lamp broken
+    0.570 → 0.605, dent 0.333 → 0.352, scratch 0.321 → 0.326, crack 0.271 → 0.244 (máscara de
+    crack 0.089 → 0.123). Las tres clases objetivo siguen siendo las peores (~0.31).
+  - Inferencia (RTX 3050, FP32, lote 1): ~205 ms por imagen de CarDD; con 4000×3000 la mediana
+    es ~810 ms pero muy variable (260-2980 ms; el pegado de hasta 100 máscaras a 12 MP ocurre
+    dentro del modelo). Pico 2.72 GB.
 - `damage/v2_corrupta/` — primer intento de damage/v2 (2026-10-01), interrumpido a mano en la
   validación de la época 1 tras 2 h 16 min, unas 5× más lento de lo esperado (~28 min/época).
   Sin error en el log ni checkpoints; la causa probable es la laptop en suspensión o con
@@ -397,7 +432,7 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
 `test_coco_eval.py`, `test_transforms.py`, `test_audit.py`, `test_freeze_bn.py`,
 `test_class_map.py`, `test_compare_versions.py`) y
 `tests/preprocessing/test_specular_removal.py`. Resultado actual: ver `pytest -q`.
-`tests/detection/manual_inference.py` es un demo con GUI, no se colecta.
+Los `manual_inference.py` de `tests/detection/{parts,damage}-segmentation/` son demos con GUI, no se colectan.
 
 ## Plan de trabajo acordado (registrado, no ejecutado salvo donde se indica)
 0. ~~Cerrar el `class_map`~~ — hecho (29 clases).

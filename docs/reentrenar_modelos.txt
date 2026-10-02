@@ -144,6 +144,13 @@ lista completa. Los flags mas importantes (identicos para todos):
 
    Referencia damage/v1 (val, epoca 11): bbox AP 0.5191, mask AP 0.5020.
 
+   Estado: ENTRENADO el 2026-10-01 en models/checkpoints/damage/v2/ (commit
+   df5948c, 4.6 h). Mejor epoca 10 (val mask AP 0.5124). En test: box AP
+   0.5275, mask AP 0.5075; contra v1 ninguna diferencia es distinguible del
+   ruido (bootstrap pareado, IC 95%). Revisarlo con:
+       tests/detection/damage-segmentation/evaluate_damage_test_set.ipynb
+   Para reentrenar, usar otra carpeta (p. ej. damage/v3).
+
    TIEMPO ESTIMADO (medido en v1, RTX 3050 6GB, batch-size 2, AMP ON):
        train  ~1.1 batch/s -> 1408 batches -> ~22 min por epoca
        eval   ~1.1 batch/s ->  405 batches -> ~ 6 min por epoca
@@ -213,7 +220,7 @@ lista completa. Los flags mas importantes (identicos para todos):
 
    Para probar con una foto propia, con un explorador de archivos:
 
-       ./venv_cuda/Scripts/python.exe tests/detection/manual_inference.py \
+       ./venv_cuda/Scripts/python.exe tests/detection/damage-segmentation/manual_inference.py \
            models/checkpoints/damage/v1/best_model.pth
 
 
