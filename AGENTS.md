@@ -63,7 +63,7 @@ Espiral de Boehm con 4 vueltas (una por módulo M1-M4), seguidas de integración
 cierre. **Fecha final: 23 nov 2026.** El roadmap de 5 sprints (Sprint 1 Preprocesamiento …
 Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen.
 
-## Estado real (rama `feature/car-parts-detection`, 2026-09-29)
+## Estado real (rama `feature/car-parts-detection`, 2026-10-01)
 | Pieza | Estado |
 |---|---|
 | M1 | **Parcial.** `specular_removal.py` funciona y tiene pruebas. `normalization.py` hace resize 512×512 + ImageNet (incompatible, ver abajo). Falta validación de formato/resolución, EXIF, metadatos, pipeline encadenado y pruebas. Ningún script de entrenamiento o inferencia lo usa. |
@@ -436,9 +436,10 @@ Los `manual_inference.py` de `tests/detection/{parts,damage}-segmentation/` son 
 
 ## Plan de trabajo acordado (registrado, no ejecutado salvo donde se indica)
 0. ~~Cerrar el `class_map`~~ — hecho (29 clases).
-1. Entrenamientos: ~~`car_parts/v2`~~ (hecho, ver Checkpoints) y `damage/v2`
-   (augmentation, `--epochs 12 --lr-step-size 8`, `--output damage/v2`). Considerar una
-   corrida A/B de BatchNorm en car_parts antes de fijar la receta.
+1. Entrenamientos: ~~`car_parts/v2`~~ y ~~`damage/v2`~~ (hechos, ver Checkpoints). La
+   augmentation no mejoró `damage` de forma demostrable; lo que más limita a M3 con fotos del
+   protocolo es la escala (ver auditoría de CarDD). Pendiente opcional: corrida A/B de
+   BatchNorm en car_parts.
 2. M3: asignación a partes + JSON, con pruebas.
 3. M4: emparejamiento + reporte, con pruebas.
 4. M1 compatible con los detectores (sin resize 512 ni ImageNet) + experimento de AP con y sin
