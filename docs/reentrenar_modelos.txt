@@ -22,8 +22,8 @@ IMPORTANTE 2: cada entrenamiento va en una carpeta --output NUEVA.
    best_model.pth, se reemplazan last_model.pth, metrics.json, status.json y
    run_info.json, y train.log queda con las dos corridas mezcladas.
    models/checkpoints/ no esta en git: lo sobrescrito NO se recupera.
-   OJO con los defaults: car_parts.train escribe en car_parts/v1 y
-   damage.train en damage/v1 (los modelos buenos actuales) si no pasas --output.
+   OJO con los defaults: car_parts.train escribe en car_parts/v1 (el modelo v1)
+   si no pasas --output. damage.train ya escribe por default en damage/v2.
 
 Todo se controla con flags, no hace falta editar codigo. Con --help ves la
 lista completa. Los flags mas importantes (identicos para todos):
@@ -48,6 +48,9 @@ lista completa. Los flags mas importantes (identicos para todos):
                           batches de 2 imagenes. Gamma/beta si siguen
                           aprendiendo. OFF por default: se decidira con una
                           corrida A/B en car_parts (misma semilla, con y sin).
+    --no-class-map        ignora el class_map de la config y entrena con las
+                          clases originales (solo aplica a car_parts v2, que
+                          por default usa src/detection/car_parts/class_map.py).
     --max-train-images N  limita el train set  (SOLO para pruebas rapidas)
     --max-val-images N    limita el val set    (SOLO para pruebas rapidas)
     --metric coco|simple  coco (default) = COCO AP estandar via pycocotools,
@@ -57,43 +60,96 @@ lista completa. Los flags mas importantes (identicos para todos):
 
 1) PARTES v2 — Mask R-CNN (la que usa M3)
    ---------------------------------------------------------------
-   327 imagenes efectivas de train (333 menos 6 sin anotaciones), 47 clases.
-   Todas las anotaciones son poligonos validos.
+   327 imagenes efectivas de train (333 menos 6 sin anotaciones; en realidad
+   111 fotos x 3 copias aumentadas por Roboflow). Todas las anotaciones son
+   poligonos validos.
+
+   CLASES: v2 aplica src/detection/car_parts/class_map.py a train, val y test:
+   izquierda/derecha fusionadas, 9 clases descartadas -> 29 clases finales
+   (30 salidas con el fondo). Mapa cerrado el 2026-09-29 con la muestra
+   visual de models/checkpoints/car_parts/_muestra_clases/.
+   OJO: la etiqueta original "windshield" son los LIMPIAPARABRISAS (se
+   descarta); el cristal es "front_glass", que pasa a llamarse "windshield".
+   El mapa aplicado queda en run_info.json y en el checkpoint.
 
        ./venv_cuda/Scripts/python.exe -m src.detection.car_parts.train_masks \
            --epochs 20 --output models/checkpoints/car_parts/v2
 
-   Estado: NO hay modelo v2 entrenado. Dos corridas interrumpidas (una de 17 s
-   y otra de 1 epoca completa) se movieron a car_parts/v2_interrumpido_smoke/;
-   car_parts/v2/ debe estar vacia o no existir antes de lanzar.
-   Tiempo medido en esa corrida: ~105 s por epoca (train + eval) -> 20 epocas
-   ~35 min. Pico de GPU 2.25 GB.
+   Estado: ENTRENADO el 2026-09-29 en models/checkpoints/car_parts/v2/ con el
+   comando de arriba (commit 895f096). 33 min, ~99 s por epoca, pico de GPU
+   2.25 GB. Mejor epoca 16 (val mask AP 0.6435). En test: box AP 0.6041,
+   mask AP 0.5779. Para reentrenar, usar otra carpeta (p. ej. car_parts/v3).
+   Corridas fallidas previas: car_parts/v2_interrumpido_smoke/ y
+   car_parts/v2_fallido_rle/ (bug ya corregido en 7bbf1b9).
+
+   Para revisar el modelo (AP por clase, figuras, salida de M2 con mascaras):
+   tests/detection/parts-segmentation/evaluate_test_set_v2.ipynb
 
    Val (32 imgs) tiene 5 clases sin instancias y test (16 imgs) 6: los AP de
    partes son indicativos.
+
+
+1b) COMPARAR v1 CONTRA v2 (despues de entrenar v2)
+   ---------------------------------------------------------------
+   La seleccion del mejor checkpoint de cada version se hace con val (lo hace
+   el trainer). El veredicto v1-vs-v2 se calcula en TEST:
+
+       ./venv_cuda/Scripts/python.exe -m src.detection.car_parts.compare_versions \
+           --v1 models/checkpoints/car_parts/v1/best_model.pth \
+           --v2 models/checkpoints/car_parts/v2/best_model.pth \
+           --split test --output models/checkpoints/car_parts/v2/compare
+
+   Escribe compare_test.json y compare_test.md: experimento A (v1 en 47 clases
+   vs v1 mapeado a las clases finales) y B (v1 mapeado vs v2, cajas, mas el
+   mask AP de v2), AP por clase con instancias, bootstrap pareado por imagen
+   (1000, semilla 0, IC 95%). Clases con <10 instancias: "poco fiable".
+   Con --split valid avisa que ese split no sirve para el veredicto.
+   Tarda ~20 s en test (16 imagenes) en la RTX 3050.
+
+   Chequeo ya hecho: v1 contra si mismo en test da diferencia B = 0 exacta
+   (models/checkpoints/car_parts/_compare_v1_vs_v1/).
 
 
 2) PARTES v1 — Faster R-CNN (referencia, ya entrenado)
    ---------------------------------------------------------------
    models/checkpoints/car_parts/v1/ (20 epocas, sin augmentation). Su
    "val mAP@0.5 = 0.7878" es la metrica casera: NO es comparable con COCO AP.
-   Comparacion valida (test, notebook tests/detection/evaluate_test_set.ipynb):
-   AP@0.5:0.95 = 0.5389, AP50 = 0.7689.
+   Comparacion valida (COCO AP en test, con compare_versions o con el notebook
+   tests/detection/parts-segmentation/evaluate_test_set_v2.ipynb): AP@0.5:0.95 = 0.5389,
+   AP50 = 0.7689. El notebook viejo evaluate_test_set.ipynb NO calcula AP.
    Solo reentrenar v1 para reproducirlo, y siempre con --output nuevo.
 
 
 3) DANOS v2 — Mask R-CNN con augmentation
    ---------------------------------------------------------------
-   2816 imagenes de train, 810 de val, 6 clases. Mismos hiperparametros que v1:
+   2816 imagenes de train, 810 de val, 6 clases. Mismos hiperparametros que v1,
+   con augmentation y best_model.pth elegido por MASK AP (default de la config
+   desde 2026-09-30; M3 usa las mascaras de dano).
+
+   Forma recomendada (PowerShell, desde la raiz del proyecto): abre el monitor
+   en otra ventana y entrena en la actual.
+
+       powershell -ExecutionPolicy Bypass -File scripts\train_damage_v2.ps1
+
+   Equivalente a mano:
 
        ./venv_cuda/Scripts/python.exe -m src.detection.damage.train \
-           --epochs 12 --lr-step-size 8 --output models/checkpoints/damage/v2
+           --epochs 12 --lr-step-size 8 --select-by segm \
+           --output models/checkpoints/damage/v2
+       ./venv_cuda/Scripts/python.exe -m src.detection.common.watch \
+           models/checkpoints/damage/v2          (en otra terminal)
 
-   Para seleccionar por mask AP en vez de bbox AP, agregar --select-by segm.
    Para una comparacion estricta contra v1 (que no tenia augmentation),
    agregar --no-augment.
 
    Referencia damage/v1 (val, epoca 11): bbox AP 0.5191, mask AP 0.5020.
+
+   Estado: ENTRENADO el 2026-10-01 en models/checkpoints/damage/v2/ (commit
+   df5948c, 4.6 h). Mejor epoca 10 (val mask AP 0.5124). En test: box AP
+   0.5275, mask AP 0.5075; contra v1 ninguna diferencia es distinguible del
+   ruido (bootstrap pareado, IC 95%). Revisarlo con:
+       tests/detection/damage-segmentation/evaluate_damage_test_set.ipynb
+   Para reentrenar, usar otra carpeta (p. ej. damage/v3).
 
    TIEMPO ESTIMADO (medido en v1, RTX 3050 6GB, batch-size 2, AMP ON):
        train  ~1.1 batch/s -> 1408 batches -> ~22 min por epoca
@@ -164,7 +220,7 @@ lista completa. Los flags mas importantes (identicos para todos):
 
    Para probar con una foto propia, con un explorador de archivos:
 
-       ./venv_cuda/Scripts/python.exe tests/detection/manual_inference.py \
+       ./venv_cuda/Scripts/python.exe tests/detection/damage-segmentation/manual_inference.py \
            models/checkpoints/damage/v1/best_model.pth
 
 
@@ -181,6 +237,8 @@ lista completa. Los flags mas importantes (identicos para todos):
    src/detection/common/coco_dataset.py  lectura de COCO y rasterizado de
                                         poligonos a mascaras.
    src/detection/car_parts/config.py   CONFIG (v1) y MASK_CONFIG (v2).
+   src/detection/car_parts/class_map.py  clases originales -> clases finales.
+   src/detection/car_parts/compare_versions.py  comparacion v1 vs v2.
    src/detection/damage/config.py      rutas y defaults del modelo de danos.
 
    Para agregar otro detector: crea src/detection/<nombre>/ con un config.py

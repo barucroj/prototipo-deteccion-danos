@@ -15,6 +15,7 @@ scratch is localized.
 from __future__ import annotations
 
 import contextlib
+import copy
 import io as _io
 
 import numpy as np
@@ -35,6 +36,27 @@ STAT_NAMES = (
     "AP", "AP50", "AP75", "AP_small", "AP_medium", "AP_large",
     "AR_1", "AR_10", "AR_100", "AR_small", "AR_medium", "AR_large",
 )
+
+
+def load_coco_gt(gt):
+    """A ``COCO`` ground-truth object from a JSON path or an in-memory COCO dict.
+
+    Pass the dataset's ``coco_gt`` dict when a class map rewrote the
+    categories: the file on disk still has the original ids.
+
+    A dict is deep-copied: ``COCOeval`` with ``iouType="segm"`` rewrites each
+    ground-truth ``segmentation`` in place (polygons -> RLE), and the dataset
+    shares those annotation dicts, so without the copy the next epoch's
+    ``__getitem__`` would hit RLE and raise.
+    """
+    with contextlib.redirect_stdout(_io.StringIO()):
+        if isinstance(gt, dict):
+            coco = COCO()
+            coco.dataset = copy.deepcopy(gt)
+            coco.createIndex()
+        else:
+            coco = COCO(gt)
+    return coco
 
 
 def _encode_mask(mask: np.ndarray) -> dict:
@@ -97,8 +119,8 @@ def evaluate_coco(model, data_loader, device, ann_json_path: str,
     """Standard COCO AP for one split.
 
     Args:
-        ann_json_path: The split's original COCO annotation file, used as
-            ground truth.
+        ann_json_path: Ground truth: the split's COCO JSON path, or the
+            dataset's ``coco_gt`` dict (required when a class map is applied).
         image_ids: Restrict scoring to these source COCO image ids — required
             when the dataset dropped images (``skip_empty``) or was capped,
             otherwise the missing images count as pure false negatives.
@@ -120,8 +142,8 @@ def evaluate_coco(model, data_loader, device, ann_json_path: str,
         print("  (no detections produced — skipping COCO evaluation)")
         return {}
 
+    coco_gt = load_coco_gt(ann_json_path)
     with contextlib.redirect_stdout(_io.StringIO()):
-        coco_gt = COCO(ann_json_path)
         coco_dt = coco_gt.loadRes(detections)
 
     iou_types = ["bbox"] + (["segm"] if with_masks else [])
@@ -161,8 +183,8 @@ def per_category_ap(model, data_loader, device, ann_json_path: str, categories,
     if not detections:
         return {}
 
+    coco_gt = load_coco_gt(ann_json_path)
     with contextlib.redirect_stdout(_io.StringIO()):
-        coco_gt = COCO(ann_json_path)
         coco_dt = coco_gt.loadRes(detections)
         coco_eval = COCOeval(coco_gt, coco_dt, iou_type)
         if image_ids is not None:

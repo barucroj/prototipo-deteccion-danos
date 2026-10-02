@@ -20,6 +20,9 @@ Two configs share the dataset:
   train / 827 valid / 419 test, no RLE), so masks are rasterized exactly.
   ``best_model.pth`` is selected by mask AP, since the masks are the output
   M3 consumes. Train it with ``python -m src.detection.car_parts.train_masks``.
+  It applies :data:`src.detection.car_parts.class_map.CLASS_MAP` (left/right
+  merged, rare classes discarded) to every split; ``--no-class-map`` turns it
+  off.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
+from src.detection.car_parts.class_map import CLASS_MAP
 from src.detection.common.config import DetectorConfig
 
 CONFIG = DetectorConfig(
@@ -57,4 +61,5 @@ MASK_CONFIG = replace(
     arch="mask_rcnn",
     default_output=os.path.join("models", "checkpoints", "car_parts", "v2"),
     default_select_by="segm",
+    class_map=CLASS_MAP,
 )

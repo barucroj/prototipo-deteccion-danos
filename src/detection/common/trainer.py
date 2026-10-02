@@ -89,6 +89,11 @@ def build_arg_parser(cfg) -> argparse.ArgumentParser:
     parser.add_argument("--select-by", default=cfg.default_select_by, choices=SELECT_BY,
                         help="COCO AP@0.5:0.95 that picks best_model.pth: 'bbox' (box AP) or "
                              "'segm' (mask AP, Mask R-CNN only). Default comes from the config.")
+    parser.add_argument("--no-class-map", dest="class_map", action="store_false",
+                        default=True,
+                        help="Ignore the config's class_map and train on the dataset's "
+                             "original categories (e.g. to reproduce car_parts/v1's 47 "
+                             "classes). No effect on configs without a class_map.")
     parser.add_argument("--freeze-bn", action="store_true", default=False,
                         help="Keep every BatchNorm2d in eval mode while training, so the "
                              "COCO-pretrained running stats are not re-estimated from "
@@ -120,6 +125,40 @@ def validate_args(cfg, args) -> None:
             raise SystemExit("--select-by segm needs --metric coco (the simple metric is boxes-only)")
 
 
+def build_checkpoint_payload(model, dataset, cfg, args, epoch, augmented: bool,
+                             val_map=None, val_map50=None, coco_stats=None) -> dict:
+    """Everything a checkpoint stores, so ``predict`` never needs to be told its origin.
+
+    ``class_map`` is the table actually applied to the data (``None`` when the
+    config has none or ``--no-class-map`` was passed), and ``categories`` are
+    the resulting final classes the model predicts.
+    """
+    payload = {
+        "model_state_dict": model.state_dict(),
+        "num_classes": dataset.num_classes,
+        "categories": dataset.categories,
+        "class_map": dataset.class_map,
+        "arch": args.arch,
+        "with_masks": cfg.with_masks,
+        "detector": cfg.name,
+        "metric": args.metric,
+        "select_by": args.select_by,
+        "seed": args.seed,
+        "freeze_bn": args.freeze_bn,
+        "augmented": augmented,
+        "epoch": epoch,
+    }
+    # Under --metric coco, val_map is AP@0.5:0.95 and val_map50 is AP50 of the
+    # --select-by IoU type; under --metric simple both are the same
+    # from-scratch box mAP@0.5.
+    if val_map is not None:
+        payload["val_map"] = val_map
+        payload["val_map50"] = val_map50
+    if coco_stats:
+        payload["coco"] = coco_stats
+    return payload
+
+
 def run_training(cfg, args) -> float:
     """Train, evaluating on the validation split every ``--eval-every`` epochs.
 
@@ -147,8 +186,9 @@ def run_training(cfg, args) -> float:
     ) if args.augment else None
 
     train_dataset = build_dataset(cfg, cfg.train_split, args.data_root,
-                                  transforms=train_transforms)
-    valid_dataset = build_dataset(cfg, cfg.val_split, args.data_root)
+                                  use_class_map=args.class_map, transforms=train_transforms)
+    valid_dataset = build_dataset(cfg, cfg.val_split, args.data_root,
+                                  use_class_map=args.class_map)
 
     if args.max_train_images is not None:
         train_dataset.samples = train_dataset.samples[: args.max_train_images]
@@ -172,6 +212,9 @@ def run_training(cfg, args) -> float:
         "amp": use_amp,
         "freeze_bn": args.freeze_bn,
         "augmentation": repr(train_transforms) if train_transforms else None,
+        "class_map": train_dataset.class_map,
+        "class_map_stats": {"train": train_dataset.class_map_stats,
+                            "valid": valid_dataset.class_map_stats},
         "datasets": {"train": train_summary, "valid": dataset_summary(valid_dataset)},
     })
 
@@ -185,6 +228,14 @@ def run_training(cfg, args) -> float:
         f"Freeze BN stats: {args.freeze_bn}")
     log(f"Epochs: {args.epochs}  |  Batch size: {args.batch_size}  |  LR: {args.lr}"
         f"  |  LR step: {args.lr_step_size or 'none'}")
+    if train_dataset.class_map is not None:
+        for split_name, ds in (("train", train_dataset), ("valid", valid_dataset)):
+            st = ds.class_map_stats
+            log(f"Class map ({split_name}): {len(st['final_categories'])} final classes  |  "
+                f"{sum(st['instances_discarded'].values())} instances discarded  |  "
+                f"{st['images_emptied']} images left without annotations (dropped)")
+    elif cfg.class_map is not None:
+        log("Class map: OFF (--no-class-map), training on the original categories")
     if train_summary["classes_without_instances"]:
         log("WARNING: classes with no training instances: "
             + ", ".join(train_summary["classes_without_instances"]))
@@ -210,29 +261,8 @@ def run_training(cfg, args) -> float:
                       optimizer=optimizer, device=device)
 
     def checkpoint_payload(epoch, val_map=None, val_map50=None, coco_stats=None):
-        payload = {
-            "model_state_dict": model.state_dict(),
-            "num_classes": train_dataset.num_classes,
-            "categories": train_dataset.categories,
-            "arch": args.arch,
-            "with_masks": cfg.with_masks,
-            "detector": cfg.name,
-            "metric": args.metric,
-            "select_by": args.select_by,
-            "seed": args.seed,
-            "freeze_bn": args.freeze_bn,
-            "augmented": bool(train_transforms),
-            "epoch": epoch,
-        }
-        # Under --metric coco, val_map is AP@0.5:0.95 and val_map50 is AP50 of
-        # the --select-by IoU type; under --metric simple both are the same
-        # from-scratch box mAP@0.5.
-        if val_map is not None:
-            payload["val_map"] = val_map
-            payload["val_map50"] = val_map50
-        if coco_stats:
-            payload["coco"] = coco_stats
-        return payload
+        return build_checkpoint_payload(model, train_dataset, cfg, args, epoch,
+                                        bool(train_transforms), val_map, val_map50, coco_stats)
 
     history = []
     best_map = -1.0
@@ -259,7 +289,7 @@ def run_training(cfg, args) -> float:
                 auditor.start_phase("eval", len(valid_loader))
                 if args.metric == "coco":
                     coco_stats = evaluate_coco(
-                        model, valid_loader, device, valid_dataset.ann_json_path,
+                        model, valid_loader, device, valid_dataset.coco_gt,
                         image_ids=valid_dataset.coco_image_ids, with_masks=cfg.with_masks,
                         on_batch=auditor.on_batch,
                     )

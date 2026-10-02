@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, FrozenSet, Tuple
+from typing import Dict, FrozenSet, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,9 @@ class DetectorConfig:
         default_output: Default ``--output`` checkpoint folder.
         default_epochs / default_batch_size / default_lr: CLI defaults, tuned
             per dataset (CarDD is ~8x larger than the car-parts split).
+        class_map: Optional original-name -> final-name (or ``None`` =
+            discard) table applied to every split on load; see
+            :func:`src.detection.common.coco_dataset.apply_class_map`.
         default_select_by: Which COCO AP picks ``best_model.pth``: ``"bbox"``
             or ``"segm"`` (mask AP; only for ``with_masks`` configs). Use
             ``"segm"`` when the masks are what a downstream module consumes.
@@ -58,6 +61,7 @@ class DetectorConfig:
     default_batch_size: int = 2
     default_lr: float = 0.005
     default_select_by: str = "bbox"
+    class_map: Optional[Dict[str, Optional[str]]] = None
 
     def split_paths(self, split: str, data_root: str = None) -> Tuple[str, str]:
         """Absolute-ish ``(images_dir, annotations_path)`` for one split.

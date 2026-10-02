@@ -90,3 +90,42 @@ def test_evaluate_coco_returns_empty_when_model_finds_nothing(monkeypatch):
     monkeypatch.setattr(coco_eval, "collect_detections", lambda *a, **k: [])
     result = coco_eval.evaluate_coco(None, None, None, "unused.json")
     assert result == {}
+
+
+def test_segm_evaluation_does_not_mutate_the_dataset_ground_truth(tmp_path):
+    """Regression: COCOeval(segm) rewrites GT polygons to RLE in place.
+
+    The trainer evaluates against ``dataset.coco_gt``, whose annotation dicts
+    the dataset also yields from; without the copy in ``load_coco_gt`` epoch 2
+    crashed in ``polygons_to_mask`` with "RLE segmentation is not supported".
+    """
+    import contextlib
+    import io
+
+    from PIL import Image
+    from pycocotools.cocoeval import COCOeval
+
+    from src.detection.common.coco_dataset import CocoDetectionDataset
+
+    Image.new("RGB", (20, 20)).save(tmp_path / "a.jpg")
+    poly = [[2, 2, 12, 2, 12, 12, 2, 12]]
+    ann_path = tmp_path / "ann.json"
+    ann_path.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": "a.jpg", "width": 20, "height": 20}],
+        "categories": [{"id": 1, "name": "door"}],
+        "annotations": [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [2, 2, 10, 10],
+                         "area": 100, "iscrowd": 0, "segmentation": poly}],
+    }), encoding="utf-8")
+    ds = CocoDetectionDataset(str(tmp_path), str(ann_path), with_masks=True,
+                              class_map={"door": "door"})
+
+    for _ in range(2):  # two "epochs" of validation
+        gt = coco_eval.load_coco_gt(ds.coco_gt)
+        dets = [{"image_id": 1, "category_id": 1, "bbox": [2, 2, 10, 10], "score": 1.0,
+                 "segmentation": poly}]
+        with contextlib.redirect_stdout(io.StringIO()):
+            ev = COCOeval(gt, gt.loadRes(dets), "segm")
+            ev.evaluate()
+        assert isinstance(ds.samples[0][4][0]["segmentation"], list)
+        _, target = ds[0]
+        assert target["masks"].shape == (1, 20, 20)

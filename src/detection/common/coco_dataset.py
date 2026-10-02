@@ -9,8 +9,12 @@ which differ only in folder layout and which category ids are real classes.
 Category ids are used **as-is** as model class ids, with 0 reserved for
 background per the torchvision convention, so ``num_classes = max(id) + 1``.
 That works because both datasets happen to have contiguous ids starting at 1
-(car-parts 1-47 after dropping the Roboflow root category 0; CarDD 1-6). If a
-future dataset has sparse or 0-based ids this needs a remapping table.
+(car-parts 1-47 after dropping the Roboflow root category 0; CarDD 1-6).
+
+Optionally a ``class_map`` (original name -> final name, or ``None`` to
+discard) rewrites the categories on load: see :func:`apply_class_map`. Final
+ids are the final names sorted alphabetically -> 1..N, so they are contiguous
+by construction.
 
 Instance masks are rasterized from the source polygons with ``cv2.fillPoly``,
 which is exact for polygon segmentations and keeps this module free of a
@@ -21,8 +25,9 @@ from __future__ import annotations
 
 import json
 import os
-from collections import defaultdict
-from typing import Iterable
+import copy
+from collections import Counter, defaultdict
+from typing import Dict, Iterable, Mapping, Optional, Tuple
 
 import numpy as np
 import torch
@@ -65,6 +70,75 @@ def polygons_to_mask(segmentation, height: int, width: int) -> np.ndarray:
     return mask
 
 
+def final_categories(class_map: Mapping[str, Optional[str]]) -> Dict[int, str]:
+    """``{final_id: final_name}``: the non-None final names, sorted, as ids 1..N."""
+    names = sorted({name for name in class_map.values() if name is not None})
+    return {i: name for i, name in enumerate(names, start=1)}
+
+
+def apply_class_map(coco: dict, class_map: Mapping[str, Optional[str]],
+                    exclude_category_ids: Iterable[int] = ()) -> Tuple[dict, dict]:
+    """Rewrite a COCO dict's categories through ``class_map``.
+
+    Categories in ``exclude_category_ids`` are removed first (as without a
+    map). Every remaining category name must be a key of ``class_map`` and
+    every key must be a category of the file, so a typo raises instead of
+    silently dropping or keeping a class. Annotations of classes mapped to
+    ``None`` are removed; merged classes share one final id.
+
+    Returns:
+        ``(new_coco, stats)``. ``new_coco`` is a copy with final
+        ``categories`` and remapped ``annotations`` (images unchanged), usable
+        as COCOeval ground truth. ``stats`` counts what the map changed:
+        ``instances_discarded`` per original class, ``instances_per_final_class``,
+        ``images_emptied`` (had annotations before the map, none after) and
+        ``images_without_annotations`` (already empty in the source file).
+    """
+    excluded = set(exclude_category_ids)
+    original = {c["id"]: c["name"] for c in coco["categories"] if c["id"] not in excluded}
+    missing = sorted(set(original.values()) - set(class_map))
+    unknown = sorted(set(class_map) - set(original.values()))
+    if missing or unknown:
+        raise ValueError(f"class_map does not match the dataset: missing {missing}, "
+                         f"unknown {unknown}")
+
+    final = final_categories(class_map)
+    final_id = {name: i for i, name in final.items()}
+    id_map = {cid: (final_id[class_map[name]] if class_map[name] is not None else None)
+              for cid, name in original.items()}
+
+    kept, discarded, per_final = [], Counter(), Counter()
+    had_anns, has_anns = set(), set()
+    for ann in coco["annotations"]:
+        if ann["category_id"] in excluded:
+            continue
+        had_anns.add(ann["image_id"])
+        new_id = id_map[ann["category_id"]]
+        if new_id is None:
+            discarded[original[ann["category_id"]]] += 1
+            continue
+        new_ann = dict(ann)
+        new_ann["category_id"] = new_id
+        kept.append(new_ann)
+        per_final[final[new_id]] += 1
+        has_anns.add(ann["image_id"])
+
+    new_coco = {k: copy.deepcopy(v) for k, v in coco.items()
+                if k not in ("categories", "annotations")}
+    new_coco["categories"] = [{"id": i, "name": n, "supercategory": "none"}
+                              for i, n in final.items()]
+    new_coco["annotations"] = kept
+    all_images = {img["id"] for img in coco["images"]}
+    stats = {
+        "final_categories": {str(i): n for i, n in final.items()},
+        "instances_discarded": dict(sorted(discarded.items())),
+        "instances_per_final_class": {n: per_final[n] for n in final.values()},
+        "images_emptied": len(had_anns - has_anns),
+        "images_without_annotations": len(all_images - had_anns),
+    }
+    return new_coco, stats
+
+
 class CocoDetectionDataset(Dataset):
     """One split of a COCO-annotated detection dataset.
 
@@ -82,6 +156,16 @@ class CocoDetectionDataset(Dataset):
             foreground classes.
         transforms: Optional callable ``(image, target) -> (image, target)``
             applied after loading, for augmentation.
+        class_map: Optional original-name -> final-name (or ``None``) table,
+            applied on load via :func:`apply_class_map`. Images left without
+            annotations by it are handled like empty images (dropped when
+            ``skip_empty``); ``class_map_stats`` reports how many.
+
+    Attributes:
+        coco_gt: The (possibly remapped) COCO dict. Use it, not the JSON on
+            disk, as COCOeval ground truth: with a class map the file's
+            category ids no longer match the model's.
+        class_map_stats: :func:`apply_class_map` stats, or ``None``.
     """
 
     def __init__(
@@ -92,6 +176,7 @@ class CocoDetectionDataset(Dataset):
         with_masks: bool = False,
         exclude_category_ids: Iterable[int] = (),
         transforms=None,
+        class_map: Optional[Mapping[str, Optional[str]]] = None,
     ):
         self.images_dir = images_dir
         self.ann_json_path = ann_json_path
@@ -102,6 +187,12 @@ class CocoDetectionDataset(Dataset):
             coco = json.load(f)
 
         excluded = set(exclude_category_ids)
+        self.class_map = dict(class_map) if class_map is not None else None
+        self.class_map_stats = None
+        if class_map is not None:
+            coco, self.class_map_stats = apply_class_map(coco, class_map, excluded)
+            excluded = set()
+        self.coco_gt = coco
         self.categories = {
             c["id"]: c["name"] for c in coco["categories"] if c["id"] not in excluded
         }
@@ -170,14 +261,21 @@ class CocoDetectionDataset(Dataset):
         return image, target
 
 
-def build_dataset(cfg, split: str, data_root: str = None, **kwargs) -> CocoDetectionDataset:
-    """Construct the dataset for one split of a :class:`DetectorConfig`."""
+def build_dataset(cfg, split: str, data_root: str = None, use_class_map: bool = True,
+                  **kwargs) -> CocoDetectionDataset:
+    """Construct the dataset for one split of a :class:`DetectorConfig`.
+
+    Args:
+        use_class_map: Apply ``cfg.class_map`` (if the config has one). False
+            loads the original categories, e.g. to reproduce ``car_parts/v1``.
+    """
     images_dir, ann_path = cfg.split_paths(split, data_root)
     return CocoDetectionDataset(
         images_dir,
         ann_path,
         with_masks=cfg.with_masks,
         exclude_category_ids=cfg.exclude_category_ids,
+        class_map=cfg.class_map if use_class_map else None,
         **kwargs,
     )
 

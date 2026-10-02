@@ -48,8 +48,13 @@ CONFIG = DetectorConfig(
     arch="mask_rcnn",
     # CarDD is ~8x the car-parts train split (2816 vs 333 images) at ~1000px,
     # so fewer epochs go further and batch size is capped by the 6 GB RTX 3050.
-    default_output=os.path.join("models", "checkpoints", "damage", "v1"),
+    # v1 (the current damage model) lives in damage/v1; defaulting to v2 keeps a
+    # bare `damage.train` from overwriting it. Always pass --output for later runs.
+    default_output=os.path.join("models", "checkpoints", "damage", "v2"),
     default_epochs=12,
     default_batch_size=2,
     default_lr=0.005,
+    # M3 intersects damage *masks* with part masks, so best_model.pth is chosen
+    # by mask AP. damage/v1 was selected by box AP (its best epoch was the same).
+    default_select_by="segm",
 )
