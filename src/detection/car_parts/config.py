@@ -9,13 +9,23 @@ appears on an actual annotation (verified across all three splits), so it is
 excluded and the 47 real ids 1-47 double as the model's foreground class ids,
 with 0 reserved for background per the torchvision convention -> 48 classes.
 
-Boxes only: car parts are large and roughly rectangular, so a bounding box is
-an adequate localization and the lighter Faster R-CNN head is enough.
+Two configs share the dataset:
+
+- ``CONFIG`` — boxes only, Faster R-CNN. What ``car_parts/v1`` was trained
+  with; kept so that run stays reproducible.
+- ``MASK_CONFIG`` — instance segmentation, Mask R-CNN. This is what module M3
+  needs: it assigns each damage to the part maximizing
+  ``area(damage_mask & part_mask) / area(damage_mask)``, which a box can only
+  approximate. Every annotation in the three splits carries a polygon (8439
+  train / 827 valid / 419 test, no RLE), so masks are rasterized exactly.
+  ``best_model.pth`` is selected by mask AP, since the masks are the output
+  M3 consumes. Train it with ``python -m src.detection.car_parts.train_masks``.
 """
 
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 
 from src.detection.common.config import DetectorConfig
 
@@ -38,4 +48,13 @@ CONFIG = DetectorConfig(
     default_epochs=20,
     default_batch_size=2,
     default_lr=0.005,
+)
+
+MASK_CONFIG = replace(
+    CONFIG,
+    description="car-parts instance segmentation (47 part categories, with masks; M3 input)",
+    with_masks=True,
+    arch="mask_rcnn",
+    default_output=os.path.join("models", "checkpoints", "car_parts", "v2"),
+    default_select_by="segm",
 )

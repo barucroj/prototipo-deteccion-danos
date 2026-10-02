@@ -46,7 +46,7 @@ def _encode_mask(mask: np.ndarray) -> dict:
 
 @torch.no_grad()
 def collect_detections(model, data_loader, device, with_masks: bool = False,
-                       score_threshold: float = 0.0):
+                       score_threshold: float = 0.0, on_batch=None):
     """Run the model over a loader and return COCO-format detection dicts.
 
     Args:
@@ -54,12 +54,13 @@ def collect_detections(model, data_loader, device, with_masks: bool = False,
             for evaluation — AP integrates over the whole precision/recall
             curve, so filtering low-score detections only removes recall the
             metric would have credited.
+        on_batch: Optional ``on_batch(batch_index)`` progress callback.
     """
     model.eval()
     detections = []
 
     pbar = tqdm(data_loader, desc="Evaluating", leave=True, unit="batch")
-    for images, targets in pbar:
+    for batch_index, (images, targets) in enumerate(pbar):
         images = [img.to(device) for img in images]
         outputs = model(images)
 
@@ -84,11 +85,15 @@ def collect_detections(model, data_loader, device, with_masks: bool = False,
                     det["segmentation"] = _encode_mask(masks[i, 0] >= 0.5)
                 detections.append(det)
 
+        if on_batch is not None:
+            on_batch(batch_index)
+
     return detections
 
 
 def evaluate_coco(model, data_loader, device, ann_json_path: str,
-                  image_ids=None, with_masks: bool = False, verbose: bool = True):
+                  image_ids=None, with_masks: bool = False, verbose: bool = True,
+                  on_batch=None):
     """Standard COCO AP for one split.
 
     Args:
@@ -98,6 +103,8 @@ def evaluate_coco(model, data_loader, device, ann_json_path: str,
             when the dataset dropped images (``skip_empty``) or was capped,
             otherwise the missing images count as pure false negatives.
         with_masks: Also compute ``segm`` AP.
+        on_batch: Optional per-batch progress callback, see
+            :func:`collect_detections`.
 
     Returns:
         ``{iou_type: {stat_name: value}}``, e.g.
@@ -107,7 +114,8 @@ def evaluate_coco(model, data_loader, device, ann_json_path: str,
     if not PYCOCOTOOLS_AVAILABLE:  # pragma: no cover
         raise ImportError("pycocotools is not installed; use engine.evaluate() instead")
 
-    detections = collect_detections(model, data_loader, device, with_masks=with_masks)
+    detections = collect_detections(model, data_loader, device, with_masks=with_masks,
+                                    on_batch=on_batch)
     if not detections:
         print("  (no detections produced — skipping COCO evaluation)")
         return {}

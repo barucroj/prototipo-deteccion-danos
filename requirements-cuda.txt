@@ -1,7 +1,7 @@
 # Entorno real de trabajo: venv_cuda (Python 3.9.13, Windows, RTX 3050 6GB).
-# Generado desde el venv que efectivamente funciona, a diferencia de
-# requirements.txt, cuyos pins (torch==2.0.1 etc.) no corresponden a nada
-# instalado.
+# Generado desde el venv que efectivamente funciona. Es el unico archivo de
+# dependencias del proyecto (requirements.txt se elimino: sus pins, p. ej.
+# torch==2.0.1, no correspondian a nada instalado).
 #
 # Las ruedas de CUDA NO estan en PyPI. Instalar torch primero:
 #

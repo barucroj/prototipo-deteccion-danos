@@ -38,6 +38,9 @@ class DetectorConfig:
         default_output: Default ``--output`` checkpoint folder.
         default_epochs / default_batch_size / default_lr: CLI defaults, tuned
             per dataset (CarDD is ~8x larger than the car-parts split).
+        default_select_by: Which COCO AP picks ``best_model.pth``: ``"bbox"``
+            or ``"segm"`` (mask AP; only for ``with_masks`` configs). Use
+            ``"segm"`` when the masks are what a downstream module consumes.
     """
 
     name: str
@@ -54,6 +57,7 @@ class DetectorConfig:
     default_epochs: int = 10
     default_batch_size: int = 2
     default_lr: float = 0.005
+    default_select_by: str = "bbox"
 
     def split_paths(self, split: str, data_root: str = None) -> Tuple[str, str]:
         """Absolute-ish ``(images_dir, annotations_path)`` for one split.

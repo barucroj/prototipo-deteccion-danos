@@ -2,11 +2,12 @@
 
 Two architectures are available, both on a ResNet50-FPN v2 backbone:
 
-- ``faster_rcnn`` — boxes only. Used for the car-parts detector, where parts
-  are large and roughly rectangular so a box is a fine localization.
-- ``mask_rcnn`` — boxes + per-instance masks. Used for the damage detector:
-  a scratch is long, thin and usually diagonal, so its bounding box is mostly
-  background and a box alone is a poor localization of the actual damage.
+- ``faster_rcnn`` — boxes only. Used by ``car_parts/v1`` (``car_parts.config.CONFIG``),
+  kept so that model stays reproducible.
+- ``mask_rcnn`` — boxes + per-instance masks. Used by the damage detector (a
+  scratch is long, thin and usually diagonal, so its box is mostly background)
+  and by ``car_parts/v2`` (``car_parts.config.MASK_CONFIG``), because M3 assigns
+  each damage to a part by intersecting their masks.
 
 Both start from COCO-pretrained weights and have their prediction heads
 replaced to match this project's class counts. With only hundreds (car parts)
@@ -16,6 +17,7 @@ is what makes either of these workable at all.
 
 from __future__ import annotations
 
+from torch import nn
 from torchvision.models.detection import (
     FasterRCNN_ResNet50_FPN_V2_Weights,
     MaskRCNN_ResNet50_FPN_V2_Weights,
@@ -76,3 +78,24 @@ def build_model(num_classes: int, arch: str = "faster_rcnn", pretrained: bool = 
     if arch == "mask_rcnn":
         return build_mask_rcnn(num_classes, pretrained)
     raise ValueError(f"unknown arch {arch!r}; expected one of {ARCHITECTURES}")
+
+
+def freeze_batchnorm_stats(model) -> int:
+    """Put every ``nn.BatchNorm2d`` in eval mode so its running stats stop updating.
+
+    The v2 R-CNNs use plain ``nn.BatchNorm2d`` (69 layers in Mask R-CNN), not
+    ``FrozenBatchNorm2d``, so in ``model.train()`` their running mean/var are
+    re-estimated from each batch of 2 images — including in ``conv1``/``layer1``,
+    whose weights are frozen. This keeps the COCO-pretrained statistics instead.
+    The affine weight/bias of trainable layers still learn. ``model.train()``
+    undoes this, so call it after every ``model.train()``.
+
+    Returns:
+        The number of BatchNorm2d layers switched to eval.
+    """
+    count = 0
+    for module in model.modules():
+        if isinstance(module, nn.BatchNorm2d):
+            module.eval()
+            count += 1
+    return count
