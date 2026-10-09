@@ -7,8 +7,9 @@ and:
 1. prints the M3 JSON to the console;
 2. writes the JSON, one mask PNG per damage and the annotated image to
    tests/damage_assignment/outputs/;
-3. opens a window showing only the damages found and the outline of the part
-   each one sits on (parts without damage are not drawn).
+3. opens three windows: the parts segmentation (every part >= 0.7), the
+   damages detected (every damage >= 0.5), and the final result showing only
+   the damages and the outline of the part each one sits on.
 
 Defaults: car_parts/v2 with parts >= 0.7, damage/v2 with damages >= 0.5, and a
 damage belongs to a part when >= 0.5 of its area lies on it. Checkpoints are
@@ -42,6 +43,7 @@ from src.damage_assignment.analyze import analyze_image  # noqa: E402
 from src.damage_assignment.output import save_analysis  # noqa: E402
 from src.damage_assignment.render import draw_analysis  # noqa: E402
 from src.detection.common.predict import load_checkpoint  # noqa: E402
+from src.detection.common.visualize import draw_detections  # noqa: E402
 
 # Checkpoints to use, overridable as argv[1] and argv[2]. Relative paths
 # resolve against the project root, so this works from any working directory.
@@ -51,10 +53,15 @@ DEFAULT_DAMAGE_CHECKPOINT = os.path.join("models", "checkpoints", "damage", "v2"
 # Where the JSON, the damage masks and the annotated image are written (in .gitignore).
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "tests", "damage_assignment", "outputs")
 
-# Fraction of the screen the result window may take when it opens.
-SCREEN_FRACTION = 0.85
+# Fraction of the screen each window may take when it opens.
+SCREEN_FRACTION = 0.75
 
-WINDOW_NAME = "Damages and their parts (press any key to close)"
+# Pixels each window is shifted from the previous one.
+WINDOW_OFFSET = 40
+
+PARTS_WINDOW = "1. Parts segmentation (M2)"
+DAMAGES_WINDOW = "2. Damages detected"
+WINDOW_NAME = "3. Damages and their parts (press any key to close)"
 
 
 def pick_image_path():
@@ -78,6 +85,14 @@ def fit_to_screen(width: int, height: int, screen_w: int, screen_h: int,
     """
     scale = min(1.0, fraction * screen_w / width, fraction * screen_h / height)
     return max(1, int(width * scale)), max(1, int(height * scale))
+
+
+def draw_all(image_bgr, detections):
+    """Every instance of one detector (mask, box, class, score), one color each."""
+    indices = list(range(len(detections)))
+    names = dict(enumerate(detections.names))
+    return draw_detections(image_bgr.copy(), detections.boxes, indices, detections.scores,
+                           names, masks=detections.masks)
 
 
 def resolve_checkpoint(argv_index: int, default: str) -> str:
@@ -121,12 +136,20 @@ def main():
     paths = save_analysis(analysis, image_bgr, OUTPUT_DIR, stem)
     print(f"\nSaved {paths['json']}, {paths['annotated']} and {len(danos)} mask(s)")
 
-    annotated = draw_analysis(image_bgr, analysis)
+    # Three windows, cascaded so all title bars stay reachable; the final
+    # result is created last and ends up on top.
+    views = [
+        (PARTS_WINDOW, draw_all(image_bgr, analysis.parts)),
+        (DAMAGES_WINDOW, draw_all(image_bgr, analysis.damages)),
+        (WINDOW_NAME, draw_analysis(image_bgr, analysis)),
+    ]
     height, width = image_bgr.shape[:2]
     win_w, win_h = fit_to_screen(width, height, screen_w, screen_h)
-    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
-    cv2.resizeWindow(WINDOW_NAME, win_w, win_h)
-    cv2.imshow(WINDOW_NAME, annotated)
+    for i, (name, view) in enumerate(views):
+        cv2.namedWindow(name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+        cv2.resizeWindow(name, win_w, win_h)
+        cv2.moveWindow(name, i * WINDOW_OFFSET, i * WINDOW_OFFSET)
+        cv2.imshow(name, view)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
