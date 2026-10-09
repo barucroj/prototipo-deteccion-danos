@@ -19,3 +19,4 @@ prototipo_deteccion_danos.egg-info
 _git_rules.txt
 tests/detection/outputsM2/
 tests/detection/outputsM3/
+tests/damage_assignment/outputs/
