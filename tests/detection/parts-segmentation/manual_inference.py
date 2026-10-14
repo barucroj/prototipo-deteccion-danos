@@ -17,8 +17,8 @@ original resolution).
 Run directly — this opens GUI windows, so it is NOT a pytest test and is not
 collected by `pytest`/`python -m pytest tests/`:
 
-    python tests/detection/parts-segmentation/manual_inference.py
-    python tests/detection/parts-segmentation/manual_inference.py models/checkpoints/damage/v1/best_model.pth
+    python tests/detection/manual_inference.py
+    python tests/detection/manual_inference.py models/checkpoints/damage/v1/best_model.pth
 """
 
 import os
@@ -30,8 +30,6 @@ import cv2
 import torch
 from torchvision.transforms import functional as F
 
-# Project root = first parent folder containing src/, so the script keeps working
-# wherever it lives under tests/ (it was moved once already).
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 while not os.path.isdir(os.path.join(PROJECT_ROOT, "src")) and os.path.dirname(PROJECT_ROOT) != PROJECT_ROOT:
     PROJECT_ROOT = os.path.dirname(PROJECT_ROOT)
@@ -48,7 +46,7 @@ DEFAULT_CHECKPOINT = os.path.join("models", "checkpoints", "car_parts", "v2", "b
 
 # Minimum confidence score for a detection to be drawn/reported. Stricter than
 # the 0.5 of tests/detection/parts-segmentation/evaluate_test_set_v2.ipynb.
-SCORE_THRESHOLD = 0.7
+SCORE_THRESHOLD = 0.5
 
 # Fraction of the screen the result window may take when it opens.
 SCREEN_FRACTION = 0.85
