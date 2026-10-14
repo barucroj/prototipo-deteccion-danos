@@ -17,5 +17,6 @@ htmlcov/
 CLAUDE.md
 prototipo_deteccion_danos.egg-info
 _git_rules.txt
-tests/detection/outputsM2/
-tests/detection/outputsM3/
+tests/m2_parts/outputs/
+tests/m3_damage/detector/outputs/
+tests/m3_damage/assignment/outputs/

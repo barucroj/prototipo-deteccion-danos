@@ -4,12 +4,12 @@ TT 27-1-0005 (ESCOM-IPN). Compara dos fotos del mismo vehículo — antes (A) y 
 una renta — y reporta los daños nuevos que aparecen en B.
 
 ## Arquitectura
-1. **M1. Preprocesamiento óptico** (`src/preprocessing/`): valida formato y resolución
+1. **M1. Preprocesamiento óptico** (`src/m1_preprocessing/`): valida formato y resolución
    (mín. 1920×1080), corrige orientación EXIF, reduce reflejos, CLAHE opcional y devuelve
    metadatos. No redimensiona ni normaliza: eso lo hacen los detectores.
-2. **M2. Segmentación de partes** (`src/detection/car_parts/`): Mask R-CNN sobre Roboflow
+2. **M2. Segmentación de partes** (`src/m2_parts/`): Mask R-CNN sobre Roboflow
    Car-Parts (47 clases). Devuelve `{clase_parte, confianza, bbox, máscara}` por parte.
-3. **M3. Detección de daños** (`src/detection/damage/`): Mask R-CNN sobre CarDD (6 clases) en
+3. **M3. Detección de daños** (`src/m3_damage/detector/`): Mask R-CNN sobre CarDD (6 clases) en
    la imagen completa; asigna cada daño a la parte con mayor solapamiento (umbral 0.5) y
    calcula su posición relativa. Devuelve un JSON por imagen, máscaras PNG e imagen anotada.
 4. **M4. Comparación antes/después**: lógica determinista (método húngaro por parte y tipo)
@@ -31,11 +31,13 @@ python -m pip install -r requirements-cuda.txt
 python -m pip install -e .
 ```
 
-Entrenamiento e inferencia: ver `docs/reentrenar_modelos.txt`.
+Entrenamiento e inferencia: ver `docs/m2_m3_reentrenar_modelos.txt`.
 
 ## Estructura
-- `src/preprocessing/` - M1
-- `src/detection/` - detectores de M2 y M3 (pipeline compartido en `common/`)
+- `src/m1_preprocessing/` - M1, preprocesamiento óptico
+- `src/m2_parts/` - M2, segmentación de partes
+- `src/m3_damage/` - M3: `detector/` (modelo de daños) y `assignment/` (asignación daño→parte)
+- `src/detection_common/` - pipeline de entrenamiento e inferencia compartido por M2 y M3
 - `data/` - Datasets (no versionados)
 - `models/checkpoints/` - Modelos entrenados (no versionados)
 - `tests/` - Pruebas (pytest)
