@@ -80,7 +80,12 @@ def to_pytorch_tensor_format(image: np.ndarray, mean: list = [0.485, 0.456, 0.40
 
 def preprocess_pipeline(image_path: str, target_size: tuple = (512, 512)) -> np.ndarray:
     """
-    Pipeline unificado de preprocesamiento para inferencia o entrenamiento.
+    Pipeline heredado: CLAHE -> letterbox a 512x512 -> normalización ImageNet + CHW.
+
+    NO usar como entrada de los detectores: los R-CNN de torchvision esperan RGB en
+    [0, 1] al tamaño original y hacen su propio resize y normalización. El camino
+    vigente de M1 es src.m1_preprocessing.pipeline (preprocess_file / preprocess_image).
+    Se conserva para los notebooks de demostración.
     """
     # 1. Cargar imagen
     img = cv2.imread(image_path)
