@@ -36,7 +36,10 @@ from src.detection_common.audit import (
 from src.detection_common.coco_dataset import build_dataset, collate_fn
 from src.detection_common.coco_eval import PYCOCOTOOLS_AVAILABLE, evaluate_coco
 from src.detection_common.model import ARCHITECTURES, build_model
-from src.detection_common.transforms import build_train_transforms
+from src.detection_common.transforms import Compose, build_train_transforms
+from src.m1_preprocessing.torch_transform import BASELINE as RAW_PREPROCESS
+from src.m1_preprocessing.torch_transform import VARIANTS as PREPROCESS_VARIANTS
+from src.m1_preprocessing.torch_transform import build_preprocess_transform
 
 SELECT_BY = ("bbox", "segm")
 
@@ -98,6 +101,10 @@ def build_arg_parser(cfg) -> argparse.ArgumentParser:
                         help="Keep every BatchNorm2d in eval mode while training, so the "
                              "COCO-pretrained running stats are not re-estimated from "
                              "batches of 2 images. Off by default (pending an A/B run).")
+    parser.add_argument("--preprocess", default=RAW_PREPROCESS, choices=list(PREPROCESS_VARIANTS),
+                        help="M1 optical preprocessing applied to the train AND validation "
+                             "images before augmentation (default: raw = none). A model trained "
+                             "with it must also be fed preprocessed images at inference.")
     parser.add_argument("--seed", type=int, default=42,
                         help="Seeds python, numpy and torch (shuffling, augmentation, head "
                              "init). Pass -1 to leave unseeded. cuDNN kernels are still not "
@@ -146,6 +153,7 @@ def build_checkpoint_payload(model, dataset, cfg, args, epoch, augmented: bool,
         "seed": args.seed,
         "freeze_bn": args.freeze_bn,
         "augmented": augmented,
+        "preprocess": getattr(args, "preprocess", RAW_PREPROCESS),
         "epoch": epoch,
     }
     # Under --metric coco, val_map is AP@0.5:0.95 and val_map50 is AP50 of the
@@ -185,10 +193,18 @@ def run_training(cfg, args) -> float:
         hflip_prob=args.hflip_prob, jitter_prob=args.jitter_prob
     ) if args.augment else None
 
+    # M1 preprocessing is part of the input, not an augmentation: it goes on
+    # both splits, and before the augmentation on the training one.
+    preprocess = build_preprocess_transform(args.preprocess)
+    train_pipeline = train_transforms
+    if preprocess is not None:
+        train_pipeline = Compose([preprocess] + ([train_transforms] if train_transforms else []))
+
     train_dataset = build_dataset(cfg, cfg.train_split, args.data_root,
-                                  use_class_map=args.class_map, transforms=train_transforms)
+                                  use_class_map=args.class_map, transforms=train_pipeline)
     valid_dataset = build_dataset(cfg, cfg.val_split, args.data_root,
-                                  use_class_map=args.class_map)
+                                  use_class_map=args.class_map,
+                                  transforms=build_preprocess_transform(args.preprocess))
 
     if args.max_train_images is not None:
         train_dataset.samples = train_dataset.samples[: args.max_train_images]
@@ -212,6 +228,9 @@ def run_training(cfg, args) -> float:
         "amp": use_amp,
         "freeze_bn": args.freeze_bn,
         "augmentation": repr(train_transforms) if train_transforms else None,
+        "preprocess": {"variant": args.preprocess,
+                       "config": (asdict(PREPROCESS_VARIANTS[args.preprocess])
+                                  if PREPROCESS_VARIANTS[args.preprocess] is not None else None)},
         "class_map": train_dataset.class_map,
         "class_map_stats": {"train": train_dataset.class_map_stats,
                             "valid": valid_dataset.class_map_stats},
@@ -225,7 +244,7 @@ def run_training(cfg, args) -> float:
     log(f"Device: {device}  |  AMP: {use_amp}  |  Metric: {args.metric}  |  "
         f"best_model by: {args.select_by} AP  |  Seed: {args.seed if args.seed >= 0 else 'none'}")
     log(f"Augmentation: {train_transforms if train_transforms else 'off'}  |  "
-        f"Freeze BN stats: {args.freeze_bn}")
+        f"Freeze BN stats: {args.freeze_bn}  |  M1 preprocess: {args.preprocess}")
     log(f"Epochs: {args.epochs}  |  Batch size: {args.batch_size}  |  LR: {args.lr}"
         f"  |  LR step: {args.lr_step_size or 'none'}")
     if train_dataset.class_map is not None:
