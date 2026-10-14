@@ -13,23 +13,23 @@ menciona siamesas: solo tenía una descripción genérica ("detectar tallones y 
 
 ## Arquitectura vigente (decidida 2026-09-29): 4 módulos + orquestador + interfaz
 
-1. **M1. Preprocesamiento óptico** (`src/preprocessing/`)
+1. **M1. Preprocesamiento óptico** (`src/m1_preprocessing/`)
    - Recibe el par A/B en JPG/PNG. Valida formato y resolución mínima 1920×1080, corrige
      orientación EXIF, reduce reflejos especulares (`specular_removal.py`), aplica CLAHE de
      forma **opcional** y devuelve metadatos (tamaño original, transformaciones aplicadas).
    - **NO redimensiona a 512×512 ni normaliza con media/desviación de ImageNet.** Los R-CNN de
      torchvision esperan RGB en [0,1] al tamaño original y hacen su propio resize (lado corto
      800, largo máx. 1333) y normalización dentro de `GeneralizedRCNNTransform`.
-2. **M2. Segmentación de partes** (`src/detection/car_parts/`)
+2. **M2. Segmentación de partes** (`src/m2_parts/`)
    - Segmentación de **instancias** con Mask R-CNN sobre Roboflow Car-Parts. Las 47 clases
-     originales se reducen con `src/detection/car_parts/class_map.py` (ver abajo).
+     originales se reducen con `src/m2_parts/class_map.py` (ver abajo).
    - Salida por imagen: lista de `{clase_parte, confianza, bbox, máscara}`.
    - **Decisión (2026-09-29): cada par izquierda/derecha se fusiona en una sola clase**
      (`left_front_door` + `right_front_door` → `front_door`, etc.). Consecuencia: el nombre de
      la parte ya no dice el lado. M3 asigna cada daño a la **instancia** de parte con mayor
      solapamiento, y M4 debe emparejar partes de A y B **por clase y posición en la imagen**,
      no solo por nombre. Esto no está implementado todavía.
-3. **M3. Detección de daños** (`src/detection/damage/` + paquete propio para la lógica)
+3. **M3. Detección de daños** (`src/m3_damage/detector/` + `src/m3_damage/assignment/` para la lógica)
    - Mask R-CNN entrenada en CarDD (6 clases), detecta sobre la **imagen completa**, no sobre
      recortes por parte.
    - Asigna cada daño a la parte con mayor `área(daño ∩ parte) / área(daño)`. Si ninguna
@@ -54,7 +54,7 @@ menciona siamesas: solo tenía una descripción genérica ("detectar tallones y 
 5. **Orquestador** A→B (M1→M2→M3→M4, cargando cada modelo una sola vez; p. ej. `src/pipeline/`)
    e **interfaz web mínima en Streamlit** (carga del par A/B y visualización del reporte).
 
-`src/detection/common/` es el pipeline compartido de entrenamiento/inferencia de M2 y M3. La
+`src/detection_common/` es el pipeline compartido de entrenamiento/inferencia de M2 y M3. La
 lógica de negocio de M3 (asignación a partes, JSON) y de M4 (emparejamiento) va en paquetes
 propios, sin duplicar ese pipeline.
 
@@ -86,7 +86,7 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
   Descríbase como "semilla fija", nunca como "reproducible".
 - **(c) mAP viejo de car_parts/v1 no comparable.** Su `val_map50 = 0.7878` es la métrica casera
   (mAP@0.5, `engine.evaluate`), no COCO AP. La comparación válida de car_parts es COCO AP en
-  **test** (`compare_versions` o `tests/detection/parts-segmentation/evaluate_test_set_v2.ipynb`, que coinciden):
+  **test** (`compare_versions` o `tests/m2_parts/evaluate_test_set_v2.ipynb`, que coinciden):
   v1 → AP 0.5389, AP50 0.7689. El notebook viejo `evaluate_test_set.ipynb` **no calcula AP**
   (solo conteos) y no es la fuente de ese número.
 - **(d) Splits de partes pequeños.** val = 32 imágenes con 5 clases sin instancias
@@ -96,10 +96,10 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
 - **(e) Reentrenar sobre la misma carpeta pierde el anterior.** `best_model.pth` se sobrescribe
   al terminar la primera época; `last_model.pth`, `metrics.json`, `status.json` y
   `run_info.json` se reemplazan; `train.log` se **anexa** (quedan corridas mezcladas).
-  `models/checkpoints/` está en `.gitignore`: no hay recuperación. `car_parts/train.py`
-  escribe por defecto en `car_parts/v1`; `damage/train.py` en `damage/v2` y `train_masks.py`
+  `models/checkpoints/` está en `.gitignore`: no hay recuperación. `m2_parts/train.py`
+  escribe por defecto en `car_parts/v1`; `m3_damage/detector/train.py` en `damage/v2` y `train_masks.py`
   en `car_parts/v2` (las dos ya existen o existirán) — **siempre pasar `--output` a una
-  carpeta nueva**. `scripts/train_damage_v2.ps1` se niega a arrancar si la carpeta ya tiene
+  carpeta nueva**. `scripts/m3_train_damage_v2.ps1` se niega a arrancar si la carpeta ya tiene
   `best_model.pth`.
 - **(f) Train de partes = 111 fotos × 3 copias aumentadas por Roboflow** (ruido "sal",
   recortes negros; mismo prefijo antes de `_jpg.rf.`). Los conteos de train están inflados ×3:
@@ -116,7 +116,7 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
 
 ## Métricas que pide el protocolo
 Precision, Recall, F1, mAP, IoU y Accuracy. Para los detectores (M2, M3), COCO AP vía
-`pycocotools` es la métrica principal (`src/detection/common/coco_eval.py`). Para M4 y el
+`pycocotools` es la métrica principal (`src/detection_common/coco_eval.py`). Para M4 y el
 sistema end-to-end (nuevo/preexistente/no visible por daño) hacen falta P, R, F1 y Accuracy
 contra ground truth propio.
 
@@ -160,52 +160,53 @@ contra ground truth propio.
 falta capturar y anotar 20-40 pares propios marcando qué daños son nuevos en B.
 
 ## Notebooks
-- `notebooks/samples_visualization*.ipynb` — uno por dataset; comparten `show_samples()` /
+- `notebooks/datos_*_muestras.ipynb` (`datos_cardd`, `datos_car_parts_roboflow`,
+  `datos_car_parts_segmentation`) — uno por dataset; comparten `show_samples()` /
   `load_coco_annotations()` duplicados (un bug en uno probablemente está en los tres). Usar
   `matplotlib.colormaps[name].resampled(n)`, no `cm.get_cmap`.
 - `notebooks/demo_avances.ipynb` — demo de avances; importa `apply_clahe_rgb`,
   `resize_with_padding` y `specular_removal` solo para visualizar.
-- `tests/detection/parts-segmentation/evaluate_test_set.ipynb` — **solo para v1**: carga test con las 47 clases
+- `tests/m2_parts/evaluate_test_set.ipynb` — **solo para v1**: carga test con las 47 clases
   originales, cuenta predicciones contra GT (no calcula AP) y guarda JSON de M2 con
   `mascara: null`. Con un checkpoint de v2 compara ids de clases distintas sin error: no usarlo
   para v2.
-- `tests/detection/parts-segmentation/evaluate_test_set_v2.ipynb` — evaluación de un checkpoint de car_parts (v2
+- `tests/m2_parts/evaluate_test_set_v2.ipynb` — evaluación de un checkpoint de car_parts (v2
   por defecto; v1 con `M2_CHECKPOINT=...`) con **las clases del checkpoint** (aplica su
   `class_map` al GT y verifica que las categorías coinciden). Una sola pasada de inferencia:
   COCO AP de caja y máscara global y por clase (con instancias y "poco fiable" < 10),
   tiempo de inferencia (4b), figuras predicción/GT en dos secciones (7a máscaras, 7b cajas),
   y salida de M2 para M3 en
-  `tests/detection/outputsM2/<carpeta del checkpoint>/`: un JSON por imagen
+  `tests/m2_parts/outputs/<carpeta del checkpoint>/`: un JSON por imagen
   `{imagen, image_id, width, height, checkpoint, score_threshold, clases, partes: [{id,
   clase_parte, confianza, bbox [x1,y1,x2,y2], area_px, mascara: "masks/<img>_pNN.png"}]}` con
   umbral 0.5. Variables de entorno: `M2_CHECKPOINT`, `M2_SPLIT`, `M2_DEVICE`. Guardado con las
   salidas de la corrida sobre `car_parts/v2`. Sus números coinciden con `compare_versions`.
-- `tests/detection/damage-segmentation/evaluate_damage_test_set.ipynb` — lo mismo para el
+- `tests/m3_damage/detector/evaluate_damage_test_set.ipynb` — lo mismo para el
   detector de daños (`M3_CHECKPOINT`, default `damage/v2`; `M3_REFERENCE`, default `damage/v1`,
   vacío para no comparar; `M3_SPLIT`, `M3_DEVICE`): COCO AP de caja/máscara global, por tamaño
   y por clase; tiempo de inferencia (4b); curva de entrenamiento contra la referencia (7);
   comparación en las mismas imágenes con bootstrap pareado e IC 95 % (8, usa las funciones de
   `compare_versions`); figuras de máscaras (9a) y cajas (9b) con una imagen por clase; y salida
-  cruda del detector en `tests/detection/outputsM3/<carpeta>/` (en `.gitignore`): un JSON por
+  cruda del detector en `tests/m3_damage/detector/outputs/<carpeta>/` (en `.gitignore`): un JSON por
   imagen `{imagen, image_id, width, height, checkpoint, score_threshold, danos: [{id, tipo,
   confianza, bbox, area_px, mascara}]}` + PNG por daño, sin `parte`/`solapamiento`/
   `pos_relativa` (el módulo de asignación de M3 no existe). Reproduce los números de test de v1.
-- `tests/detection/parts-segmentation/manual_inference.py` y
-  `tests/detection/damage-segmentation/manual_inference.py` — demos con GUI (selector de
+- `tests/m2_parts/manual_inference.py` y
+  `tests/m3_damage/detector/manual_inference.py` — demos con GUI (selector de
   archivo, ventana ajustada a la pantalla), no se colectan. Partes: default `car_parts/v2`,
   umbral 0.7. Daños: default `damage/v2`, umbral 0.5, lista cada daño con su área de máscara.
   Ambos buscan la raíz del proyecto subiendo hasta `src/` (el de partes se rompió al moverlo
   cuando la calculaba por profundidad).
-- `tests/preprocessing/*_before_after.ipynb` — demos de M1.
+- `tests/m1_preprocessing/*_before_after.ipynb` — demos de M1.
 
 Las rutas en notebooks se resuelven relativas a la raíz del proyecto, no hardcodeadas.
 
-## `src/preprocessing/` — M1
+## `src/m1_preprocessing/` — M1
 - `specular_removal.py` — Shen & Cai (2009), "maximum diffuse chromaticity", más un gating por
   brillo propio (no del paper) para no oscurecer superficies grises/negras (llantas, asfalto).
   Parámetros documentados en `ShenParams`. CLI:
-  `python -m src.preprocessing.specular_removal <input_dir> <output_dir> [-n N]`. Probado en
-  `tests/preprocessing/test_specular_removal.py`.
+  `python -m src.m1_preprocessing.specular_removal <input_dir> <output_dir> [-n N]`. Probado en
+  `tests/m1_preprocessing/test_specular_removal.py`.
 - `normalization.py` — `preprocess_pipeline()` = CLAHE (canal L en LAB) → letterbox a 512×512
   → ImageNet mean/std + CHW. **Contradice la spec de M1**: no conectarlo a los detectores. Se
   debe quitar el resize y la normalización del camino hacia los detectores (queda CLAHE como
@@ -214,27 +215,57 @@ Las rutas en notebooks se resuelven relativas a la raíz del proyecto, no hardco
   `Image.open(...).convert("RGB")` + `to_tensor`). Pendiente: medir AP con y sin
   preprocesamiento.
 
-## `src/detection/`
-**Dos detectores, un pipeline compartido.** Lo dataset-agnóstico vive en `common/`; cada
-detector es un `DetectorConfig` más wrappers de CLI. No agregar otra copia del pipeline:
+## Nombres de carpetas (desde 2026-10-13, rama `feature/module-naming`)
+Cada paquete de `src/` lleva el número de su módulo y `tests/` replica la misma estructura.
+Lo compartido por varios módulos no lleva número. Los módulos nuevos siguen la regla:
+`src/m4_comparison/`, y sin número `src/pipeline/` (orquestador) y `src/app/` (Streamlit).
+**`models/checkpoints/car_parts/` y `models/checkpoints/damage/` NO se renombraron** (sus rutas
+están en `run_info.json`, en los `train.log` y en los resultados ya citados), y el `name` de
+cada `DetectorConfig` sigue siendo `car_parts` / `damage`.
+
+```
+src/
+├── m1_preprocessing/   specular_removal.py · normalization.py
+├── m2_parts/           config.py (CONFIG = v1 Faster R-CNN; MASK_CONFIG = v2 Mask R-CNN)
+│                       class_map.py · train.py (v1) · train_masks.py (v2) · predict.py
+│                       compare_versions.py
+├── m3_damage/
+│   ├── detector/       config.py · train.py · predict.py   (CarDD, Mask R-CNN)
+│   └── assignment/     assign.py · analyze.py · output.py · render.py
+└── detection_common/   config.py · coco_dataset.py · model.py · engine.py · trainer.py
+                        coco_eval.py · transforms.py · predict.py · visualize.py
+                        audit.py · watch.py
+
+tests/
+├── m1_preprocessing/   test_specular_removal.py + notebooks antes/después
+├── m2_parts/           test_class_map.py · test_compare_versions.py · notebooks de
+│                       evaluación · manual_inference.py · outputs/ (ignorado)
+├── m3_damage/
+│   ├── detector/       notebook de evaluación · manual_inference.py · outputs/ (ignorado)
+│   └── assignment/     test_assign.py · test_analyze.py · manual_inference.py · outputs/
+└── detection_common/   test_coco_dataset · test_model · test_config · test_coco_eval
+                        test_transforms · test_audit · test_freeze_bn
+```
+
+Nombres anteriores, por si aparecen en salidas guardadas de notebooks o en registros viejos:
+`src/preprocessing` → `m1_preprocessing`; `src/detection/car_parts` → `m2_parts`;
+`src/detection/damage` → `m3_damage/detector`; `src/damage_assignment` →
+`m3_damage/assignment`; `src/detection/common` → `detection_common`;
+`tests/detection/outputsM2` y `outputsM3` → `tests/m2_parts/outputs` y
+`tests/m3_damage/detector/outputs`.
+
+## `src/detection_common/`, `src/m2_parts/`, `src/m3_damage/detector/`
+**Dos detectores, un pipeline compartido.** Lo dataset-agnóstico vive en `detection_common/`;
+cada detector es un `DetectorConfig` más wrappers de CLI. No agregar otra copia del pipeline:
 agregar una config.
 
-```
-src/detection/
-├── common/     config.py · coco_dataset.py · model.py · engine.py · trainer.py
-│               coco_eval.py · transforms.py · predict.py · visualize.py
-│               audit.py · watch.py
-├── car_parts/  config.py (CONFIG = v1 Faster R-CNN; MASK_CONFIG = v2 Mask R-CNN)
-│               train.py (v1) · train_masks.py (v2) · predict.py
-└── damage/     config.py · train.py · predict.py   (CarDD, Mask R-CNN)
-```
-
 CLIs (siempre con `./venv_cuda/Scripts/python.exe`):
-`-m src.detection.car_parts.train`, `-m src.detection.car_parts.train_masks`,
-`-m src.detection.damage.train`, `-m src.detection.{car_parts,damage}.predict`.
-Runbook completo: `docs/reentrenar_modelos.txt`.
+`-m src.m2_parts.train`, `-m src.m2_parts.train_masks`,
+`-m src.m3_damage.detector.train`, `-m src.m2_parts.predict`,
+`-m src.m3_damage.detector.predict`.
+Runbook completo: `docs/m2_m3_reentrenar_modelos.txt`.
 
-### `common/`
+### `detection_common/`
 - `config.py` — `DetectorConfig` (frozen dataclass): rutas, splits, `exclude_category_ids`,
   `with_masks`, `arch`, defaults de CLI y `default_select_by` (`"bbox"` por defecto).
 - `coco_dataset.py` — `CocoDetectionDataset`; `image_id` es el id COCO original; ids de
@@ -268,7 +299,7 @@ Runbook completo: `docs/reentrenar_modelos.txt`.
     `model.train()` (`model.freeze_batchnorm_stats`, llamado en `engine.train_one_epoch`).
     Se eligió `eval()` y no `FrozenBatchNorm2d` porque este último cambia las claves del
     `state_dict` y rompería `load_checkpoint`. Queda en `run_info.json` y en el checkpoint.
-    Probado en `tests/detection/test_freeze_bn.py`.
+    Probado en `tests/detection_common/test_freeze_bn.py`.
   - `--no-class-map` — ignora `cfg.class_map` y entrena con las categorías originales (para
     reproducir las 47 clases de v1). El mapa aplicado (o `None`) y sus estadísticas por split
     quedan en `run_info.json` (`class_map`, `class_map_stats`) y el mapa en el checkpoint
@@ -287,7 +318,7 @@ Runbook completo: `docs/reentrenar_modelos.txt`.
   - `train.log`: todo lo impreso, con fecha y hora.
   - `metrics.json` por época: loss total y por término, LR, tiempo, pico de GPU, `is_best`,
     bloque `coco`.
-- `watch.py` — `python -m src.detection.common.watch <output_dir> [--interval N] [--once]`:
+- `watch.py` — `python -m src.detection_common.watch <output_dir> [--interval N] [--once]`:
   muestra época, batch, barras de avance, losses, ETA, mejor época e historial; avisa si
   `status.json` lleva >2 min sin actualizarse o si hay losses NaN/inf.
 - `transforms.py` — augmentation de train (flip horizontal + jitter de color), activa por
@@ -296,7 +327,7 @@ Runbook completo: `docs/reentrenar_modelos.txt`.
   checkpoint; `run_prediction()` filtra por `--score-threshold` (default 0.5) y **solo dibuja**
   imágenes anotadas. No produce el JSON de M2 ni de M3.
 
-### `car_parts/` — M2
+### `m2_parts/` — M2
 Dataset #2; id 0 excluido → 47 clases originales. `CONFIG` (v1, Faster R-CNN, solo cajas,
 sin `class_map`) se conserva para reproducir v1. `MASK_CONFIG` (v2): `with_masks=True`,
 `arch="mask_rcnn"`, salida por defecto `car_parts/v2`, selección por mask AP y
@@ -318,7 +349,7 @@ sin `class_map`) se conserva para reproducir v1. `MASK_CONFIG` (v2): `with_masks
   - Clases finales con <10 instancias en val o test (AP poco fiable): `back_bumper`,
     `back_glass`, `emblem`, `fog_light`, `hood`, `indicator_light`, `mudguard`,
     `roof_trunk`, `step`, `trunk`.
-- `compare_versions.py` — `python -m src.detection.car_parts.compare_versions --v1 V1.pth
+- `compare_versions.py` — `python -m src.m2_parts.compare_versions --v1 V1.pth
   --v2 V2.pth --split test --output DIR`. Experimento A: v1 en sus clases originales contra v1
   con predicciones mapeadas por el `class_map` (NMS dentro de cada clase final, IoU 0.5).
   Experimento B: v1 mapeado contra v2, mismas imágenes y clases finales, más el mask AP de v2.
@@ -330,13 +361,13 @@ sin `class_map`) se conserva para reproducir v1. `MASK_CONFIG` (v2): `with_masks
   `COCOeval.evaluate` elimina `imgIds` repetidos; las pruebas verifican igualdad exacta con
   pycocotools (bbox y segm). Probado con v1 contra sí mismo en test: diferencia B = 0 exacta.
 
-### `damage/` — M3 (solo el detector)
+### `m3_damage/detector/` — M3 (solo el detector)
 Dataset #1 (CarDD), 7 clases. Mask R-CNN porque un rayón es largo, delgado y diagonal: su caja
 es casi todo fondo. Desde 2026-09-30 la config selecciona `best_model.pth` por **mask AP**
 (`default_select_by="segm"`, porque M3 usa las máscaras de daño) y su salida por defecto es
 `damage/v2` (antes `damage/v1`, que un `damage.train` sin `--output` sobrescribía).
 
-**Lanzar damage/v2**: `powershell -ExecutionPolicy Bypass -File scripts/train_damage_v2.ps1`.
+**Lanzar damage/v2**: `powershell -ExecutionPolicy Bypass -File scripts/m3_train_damage_v2.ps1`.
 Corre `damage.train --epochs 12 --lr-step-size 8 --select-by segm --output
 models/checkpoints/damage/v2` (augmentation por defecto) y abre en otra ventana el mismo
 monitor que car_parts (`common.watch`). Parámetros: `-Output`, `-Epochs`, `-LrStepSize`,
@@ -428,11 +459,13 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
   rondar 5.5 h en total.
 
 ## Pruebas
-`tests/detection/` (`test_coco_dataset.py`, `test_model.py`, `test_config.py`,
-`test_coco_eval.py`, `test_transforms.py`, `test_audit.py`, `test_freeze_bn.py`,
-`test_class_map.py`, `test_compare_versions.py`) y
-`tests/preprocessing/test_specular_removal.py`. Resultado actual: ver `pytest -q`.
-Los `manual_inference.py` de `tests/detection/{parts,damage}-segmentation/` son demos con GUI, no se colectan.
+`tests/detection_common/` (`test_coco_dataset.py`, `test_model.py`, `test_config.py`,
+`test_coco_eval.py`, `test_transforms.py`, `test_audit.py`, `test_freeze_bn.py`),
+`tests/m2_parts/` (`test_class_map.py`, `test_compare_versions.py`),
+`tests/m3_damage/assignment/` (`test_assign.py`, `test_analyze.py`) y
+`tests/m1_preprocessing/test_specular_removal.py`. Resultado al 2026-10-13: 158 pasan.
+Los `manual_inference.py` de `tests/m2_parts/`, `tests/m3_damage/detector/` y
+`tests/m3_damage/assignment/` son demos con GUI, no se colectan.
 
 ## Plan de trabajo acordado (registrado, no ejecutado salvo donde se indica)
 0. ~~Cerrar el `class_map`~~ — hecho (29 clases).
@@ -452,9 +485,9 @@ Los `manual_inference.py` de `tests/detection/{parts,damage}-segmentation/` son 
 - Preguntar antes de editar código; no hacer push, entrenamientos ni borrados sin
   confirmación explícita del usuario.
 - Commits de una sola línea y **sin** trailers de coautoría/atribución.
-- Todo lo común a los dos detectores va en `src/detection/common/`; M3 y M4 en paquetes propios.
+- Todo lo común a los dos detectores va en `src/detection_common/`; M3 y M4 en paquetes propios.
 - Todo módulo nuevo lleva pruebas con pytest.
-- Mantener `docs/reentrenar_modelos.txt` al día con cada entrenamiento.
+- Mantener `docs/m2_m3_reentrenar_modelos.txt` al día con cada entrenamiento.
 - Cada entrenamiento en una carpeta `--output` nueva (hallazgo (e)).
 - `AGENTS.md` se versiona; `CLAUDE.md` es una copia idéntica que queda fuera del repo
   (`.gitignore`). Al cambiar uno, copiar al otro.
