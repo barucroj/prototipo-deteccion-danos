@@ -23,5 +23,12 @@ tqdm==4.70.0
 # falta compilador de C.
 pycocotools==2.0.11
 
+# M4: metodo hungaro (scipy.optimize.linear_sum_assignment). 1.13.x es la
+# ultima serie con soporte para Python 3.9 y la primera para NumPy 2.
+scipy==1.13.1
+
+# Interfaz web de demostracion. 1.50.0 es la ultima version para Python 3.9.
+streamlit==1.50.0
+
 pytest==8.4.2
 jupyter
