@@ -63,14 +63,14 @@ Espiral de Boehm con 4 vueltas (una por módulo M1-M4), seguidas de integración
 cierre. **Fecha final: 23 nov 2026.** El roadmap de 5 sprints (Sprint 1 Preprocesamiento …
 Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen.
 
-## Estado real (rama `feature/car-parts-detection`, 2026-10-01)
+## Estado real (rama `feature/streamlit-app`, 2026-10-16)
 | Pieza | Estado |
 |---|---|
-| M1 | **Parcial.** `specular_removal.py` funciona y tiene pruebas. `normalization.py` hace resize 512×512 + ImageNet (incompatible, ver abajo). Falta validación de formato/resolución, EXIF, metadatos, pipeline encadenado y pruebas. Ningún script de entrenamiento o inferencia lo usa. |
+| M1 | **Hecho.** Validación de formato/resolución, carga con EXIF, reflejos y CLAHE opcionales, metadatos (`pipeline.py`), sin resize ni ImageNet; transform para entrenar/evaluar con M1 y experimento de AP, con pruebas. Resultado: con los modelos vigentes, M1 **no mejora** el AP (los reflejos lo empeoran; ver la sección de M1). `normalization.py` (512×512 + ImageNet) sigue en el repo pero fuera del camino hacia los detectores. |
 | M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN, 29 clases finales) **entrenado** el 2026-09-29 (ver Checkpoints): test box AP 0.6041, mask AP 0.5779; supera a v1 en AP de caja (+0.028, IC 95 % [+0.008, +0.047]) pero no en AP50. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. |
-| M3 | Modelo vigente: `damage/v2` (test: box AP 0.5275, mask AP 0.5075; frente a `damage/v1` las diferencias no son distinguibles del ruido, ver Checkpoints). **No existe** el módulo de asignación a partes ni el JSON. |
+| M3 | Modelo vigente: `damage/v2` (test: box AP 0.5275, mask AP 0.5075; frente a `damage/v1` las diferencias no son distinguibles del ruido, ver Checkpoints). Asignación a partes **hecha** (`src/m3_damage/assignment/`): parte con mayor solapamiento (mín. 0.5, partes con confianza ≥ 0.7), `pos_relativa`, JSON con `parte_id` por instancia, PNG por daño e imagen anotada, con pruebas. |
 | M4 | No existe. |
-| Orquestador / Streamlit | No existen. |
+| Orquestador / Streamlit | **Versión mínima** (2026-10-16): `src/pipeline/orchestrator.py` corre M1→M2→M3 sobre A y B y `src/app/streamlit_app.py` lo muestra. Sin M4: la pestaña de comparación solo da conteos por tipo. No probada a mano en navegador. |
 | Pares A/B con ground truth | No existen (ver "Gap conocido"). |
 
 ## Hallazgos técnicos (medidos, no supuestos)
@@ -190,7 +190,8 @@ falta capturar y anotar 20-40 pares propios marcando qué daños son nuevos en B
   cruda del detector en `tests/m3_damage/detector/outputs/<carpeta>/` (en `.gitignore`): un JSON por
   imagen `{imagen, image_id, width, height, checkpoint, score_threshold, danos: [{id, tipo,
   confianza, bbox, area_px, mascara}]}` + PNG por daño, sin `parte`/`solapamiento`/
-  `pos_relativa` (el módulo de asignación de M3 no existe). Reproduce los números de test de v1.
+  `pos_relativa` (el notebook evalúa solo el detector; esos campos los agrega
+  `src/m3_damage/assignment/`). Reproduce los números de test de v1.
 - `tests/m2_parts/manual_inference.py` y
   `tests/m3_damage/detector/manual_inference.py` — demos con GUI (selector de
   archivo, ventana ajustada a la pantalla), no se colectan. Partes: default `car_parts/v2`,
@@ -207,13 +208,31 @@ Las rutas en notebooks se resuelven relativas a la raíz del proyecto, no hardco
   Parámetros documentados en `ShenParams`. CLI:
   `python -m src.m1_preprocessing.specular_removal <input_dir> <output_dir> [-n N]`. Probado en
   `tests/m1_preprocessing/test_specular_removal.py`.
+- `validation.py` — `validate_image()`: JPG/PNG decidido por contenido, no por extensión;
+  resolución mínima 1920×1080 sin importar la orientación (lado largo ≥ 1920, corto ≥ 1080).
+  `ImageValidationError.code` ∈ `no_encontrado`, `ilegible`, `formato`, `resolucion`; el
+  mensaje está en español para el usuario.
+- `pipeline.py` — `load_image()` (BGR derecho según EXIF), `preprocess_image()` (reflejos →
+  CLAHE) y `preprocess_file()` (validación + carga + pasos + metadatos). `PreprocessConfig`:
+  reflejos **activados** y CLAHE apagado por defecto. Conserva el tamaño original.
+- `torch_transform.py` — M1 como transform de dataset (variantes `raw`, `specular`, `clahe`,
+  `both`); lo usa `--preprocess` del trainer (train **y** val) y `ap_experiment.py`.
+- `ap_experiment.py` — COCO AP de un detector con cada variante de M1 contra imágenes crudas
+  (bootstrap pareado, IC 95 %); con `--retrained` compara un modelo reentrenado con M1.
 - `normalization.py` — `preprocess_pipeline()` = CLAHE (canal L en LAB) → letterbox a 512×512
-  → ImageNet mean/std + CHW. **Contradice la spec de M1**: no conectarlo a los detectores. Se
-  debe quitar el resize y la normalización del camino hacia los detectores (queda CLAHE como
-  paso opcional). Sin pruebas.
-- Los modelos actuales se entrenaron con imágenes **crudas** (`coco_dataset.py`:
-  `Image.open(...).convert("RGB")` + `to_tensor`). Pendiente: medir AP con y sin
-  preprocesamiento.
+  → ImageNet mean/std + CHW. **Contradice la spec de M1**: no conectarlo a los detectores
+  (`pipeline.py` solo reutiliza su `apply_clahe_rgb`). Probado en `test_normalization.py`.
+- Los modelos vigentes se entrenaron con imágenes **crudas**. Resultados en **test**
+  (`<checkpoint>/m1_effect/` y `car_parts/v3_m1_specular_b/m1_retrain/`):
+  - Solo inferencia, `damage/v2`: reflejos box AP −0.085 [−0.104, −0.064], CLAHE −0.025
+    [−0.040, −0.010], ambos −0.106; **todas distinguibles** (empeoran), sobre todo dent,
+    scratch y crack.
+  - Solo inferencia, `car_parts/v2`: reflejos −0.032 [−0.055, −0.015] (empeora), CLAHE −0.002
+    (no distinguible).
+  - Reentrenado con reflejos (`car_parts/v3_m1_specular_b`) contra `car_parts/v2`: box AP
+    −0.0035 [−0.032, +0.021], mask AP −0.011; **no distinguible**.
+  - Por eso el orquestador corre M1 con reflejos **apagados** por defecto (solo validación,
+    EXIF y metadatos). Reflejos cuestan ~140-280 ms por imagen en CPU.
 
 ## Nombres de carpetas (desde 2026-10-13, rama `feature/module-naming`)
 Cada paquete de `src/` lleva el número de su módulo y `tests/` replica la misma estructura.
@@ -225,26 +244,33 @@ cada `DetectorConfig` sigue siendo `car_parts` / `damage`.
 
 ```
 src/
-├── m1_preprocessing/   specular_removal.py · normalization.py
+├── m1_preprocessing/   validation.py · pipeline.py · specular_removal.py · normalization.py
+│                       torch_transform.py · ap_experiment.py
 ├── m2_parts/           config.py (CONFIG = v1 Faster R-CNN; MASK_CONFIG = v2 Mask R-CNN)
 │                       class_map.py · train.py (v1) · train_masks.py (v2) · predict.py
 │                       compare_versions.py
 ├── m3_damage/
 │   ├── detector/       config.py · train.py · predict.py   (CarDD, Mask R-CNN)
 │   └── assignment/     assign.py · analyze.py · output.py · render.py
-└── detection_common/   config.py · coco_dataset.py · model.py · engine.py · trainer.py
-                        coco_eval.py · transforms.py · predict.py · visualize.py
-                        audit.py · watch.py
+├── detection_common/   config.py · coco_dataset.py · model.py · engine.py · trainer.py
+│                       coco_eval.py · transforms.py · predict.py · visualize.py
+│                       audit.py · watch.py
+├── pipeline/           orchestrator.py   (orquestador A/B)
+└── app/                streamlit_app.py · view.py   (interfaz web)
 
 tests/
-├── m1_preprocessing/   test_specular_removal.py + notebooks antes/después
+├── m1_preprocessing/   test_validation · test_pipeline · test_specular_removal
+│                       test_normalization · test_torch_transform · test_ap_experiment
+│                       + notebooks antes/después
 ├── m2_parts/           test_class_map.py · test_compare_versions.py · notebooks de
 │                       evaluación · manual_inference.py · outputs/ (ignorado)
 ├── m3_damage/
 │   ├── detector/       notebook de evaluación · manual_inference.py · outputs/ (ignorado)
 │   └── assignment/     test_assign.py · test_analyze.py · manual_inference.py · outputs/
-└── detection_common/   test_coco_dataset · test_model · test_config · test_coco_eval
-                        test_transforms · test_audit · test_freeze_bn
+├── detection_common/   test_coco_dataset · test_model · test_config · test_coco_eval
+│                       test_transforms · test_audit · test_freeze_bn
+├── pipeline/           test_orchestrator.py
+└── app/                test_view.py
 ```
 
 Nombres anteriores, por si aparecen en salidas guardadas de notebooks o en registros viejos:
@@ -383,13 +409,28 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
 `crack` es 39 % objetos pequeños (<32² px), lo que explica su AP bajo en v1.
 
 ### Pendiente
-- **M3**: asignación daño→parte (umbral 0.5), `pos_relativa`, JSON + PNGs, como paquete propio
-  con pruebas sobre máscaras sintéticas.
 - **M4**: emparejamiento húngaro + reporte + mapa de cambios, paquete propio con pruebas sobre
-  JSON sintéticos.
-- **M2**: definir umbral de confianza de partes y cómo resolver partes que se solapan (hoy el
-  NMS de torchvision es por clase y no resuelve solapes entre clases distintas).
-- **Orquestador** y **Streamlit**.
+  JSON sintéticos. Al terminarlo, conectarlo en `PairPipeline.analyze_pair` (línea marcada) y
+  reemplazar los conteos de la pestaña "Comparación (M4)".
+- **M2**: el umbral de partes es 0.7 en la asignación (`DEFAULT_PART_THRESHOLD`) y 0.5 en los
+  demos, sin justificación medida; falta resolver partes que se solapan (hoy el NMS de
+  torchvision es por clase y no resuelve solapes entre clases distintas).
+
+## `src/pipeline/` y `src/app/` — orquestador e interfaz
+- `pipeline/orchestrator.py` — `PairPipeline.from_checkpoints()` carga `car_parts/v2` y
+  `damage/v2` una sola vez; `analyze_pair(path_a, path_b, PipelineSettings)` valida **ambas**
+  fotos antes de cualquier inferencia y corre M1 → M2+M3 sobre A y B. `PipelineSettings`:
+  pasos de M1 (reflejos apagados, ver M1), validación de resolución, umbrales de partes (0.7),
+  daños (0.5) y solapamiento (0.5). `PairResult.to_json()` = `{A: {m1, m3, segundos}, B: …,
+  m4: null}`. Probado con modelos falsos en `tests/pipeline/`.
+- `app/streamlit_app.py` — `./venv_cuda/Scripts/python.exe -m streamlit run
+  src/app/streamlit_app.py`. Carga de A y B, ajustes en la barra lateral, una pestaña por
+  imagen (vista daños+parte / todas las partes / todos los daños, tabla de daños, partes y
+  metadatos de M1), pestaña de M4 con aviso y conteos por tipo, y descarga del JSON del par.
+- `app/view.py` — tablas, conteos, nombres en español de las clases de CarDD y reducción de la
+  imagen para mostrarla (lado largo ≤ 1600); sin Streamlit ni torch, probado en `tests/app/`.
+- Medido el 2026-10-16 (RTX 3050) con fotos propias de 1600×1200 (hay que desactivar la
+  validación): ~4-5.5 s de M2+M3 por imagen, incluido el calentamiento de CUDA.
 
 ## Checkpoints (`models/checkpoints/`, en `.gitignore`)
 - `car_parts/v1/` — Faster R-CNN, solo cajas, 20 épocas, sin augmentation. Checkpoint viejo:
@@ -422,6 +463,11 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
 - `car_parts/_muestra_clases/` — muestra visual (4 imágenes de train por clase dudosa, con
   máscaras y nombre) con la que se cerró el `class_map`. Una hoja de contacto por grupo.
 - `car_parts/_compare_v1_vs_v1/` — salida de `compare_versions` con v1 contra sí mismo en test.
+- `car_parts/v3_m1_specular/` — primer reentrenamiento con `--preprocess specular`, cortado en
+  la época 16 (`status.json` quedó en `running`, sin estado final). No usar.
+- `car_parts/v3_m1_specular_b/` — reentrenamiento con `--preprocess specular` completo (20
+  épocas, mejor época 18 por mask AP, misma receta que v2). En test no se distingue de v2 (ver
+  la sección de M1). `car_parts/smoke_test_m1_specular/` es la prueba de pipeline.
 - `damage/v1/` — Mask R-CNN, 12 épocas, `--lr-step-size 8`, AMP, batch 2, **sin
   augmentation**, 315 min. Seleccionado por bbox AP; mejor época 11 (LR 0.0005, deducido del
   StepLR; `metrics.json` de v1 no guarda LR), que también es la mejor por mask AP.
@@ -462,8 +508,11 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
 `tests/detection_common/` (`test_coco_dataset.py`, `test_model.py`, `test_config.py`,
 `test_coco_eval.py`, `test_transforms.py`, `test_audit.py`, `test_freeze_bn.py`),
 `tests/m2_parts/` (`test_class_map.py`, `test_compare_versions.py`),
-`tests/m3_damage/assignment/` (`test_assign.py`, `test_analyze.py`) y
-`tests/m1_preprocessing/test_specular_removal.py`. Resultado al 2026-10-13: 158 pasan.
+`tests/m3_damage/assignment/` (`test_assign.py`, `test_analyze.py`),
+`tests/m1_preprocessing/` (`test_validation.py`, `test_pipeline.py`,
+`test_specular_removal.py`, `test_normalization.py`, `test_torch_transform.py`,
+`test_ap_experiment.py`), `tests/pipeline/test_orchestrator.py` y `tests/app/test_view.py`.
+Resultado al 2026-10-16: 230 pasan.
 Los `manual_inference.py` de `tests/m2_parts/`, `tests/m3_damage/detector/` y
 `tests/m3_damage/assignment/` son demos con GUI, no se colectan.
 
@@ -473,11 +522,11 @@ Los `manual_inference.py` de `tests/m2_parts/`, `tests/m3_damage/detector/` y
    augmentation no mejoró `damage` de forma demostrable; lo que más limita a M3 con fotos del
    protocolo es la escala (ver auditoría de CarDD). Pendiente opcional: corrida A/B de
    BatchNorm en car_parts.
-2. M3: asignación a partes + JSON, con pruebas.
+2. ~~M3: asignación a partes + JSON, con pruebas~~ — hecho.
 3. M4: emparejamiento + reporte, con pruebas.
-4. M1 compatible con los detectores (sin resize 512 ni ImageNet) + experimento de AP con y sin
-   preprocesamiento.
-5. Orquestador + Streamlit.
+4. ~~M1 compatible con los detectores + experimento de AP con y sin preprocesamiento~~ —
+   hecho; M1 no mejora el AP (ver la sección de M1).
+5. Orquestador + Streamlit: versión mínima hecha; falta conectar M4.
 6. Evaluación end-to-end con pares A/B propios (P, R, F1, Accuracy).
 7. Limpieza de `README`, `setup.py` y `requirements.txt`: hecha.
 
