@@ -1,0 +1,36 @@
+﻿modelo,checkpoint,id,etiqueta,traduccion_es,etiquetas_originales,nota
+danos,damage/v2,1,dent,abolladura (golpe),dent,
+danos,damage/v2,2,scratch,rayón,scratch,
+danos,damage/v2,3,crack,fisura (grieta),crack,
+danos,damage/v2,4,glass shatter,cristal roto,glass shatter,
+danos,damage/v2,5,lamp broken,faro o calavera rota,lamp broken,
+danos,damage/v2,6,tire flat,llanta ponchada,tire flat,
+partes,car_parts/v2,1,back_bumper,defensa trasera,back_bumper,
+partes,car_parts/v2,2,back_door,puerta trasera (lateral),left_back_door; right_back_door,fusiona izq./der.
+partes,car_parts/v2,3,back_door_glass,cristal de puerta trasera,left_back_glass; right_back_glass,fusiona izq./der.
+partes,car_parts/v2,4,back_fender,salpicadera trasera,back_fender,
+partes,car_parts/v2,5,back_glass,medallón (cristal trasero),back_glass,
+partes,car_parts/v2,6,bumper,defensa delantera,bumper,
+partes,car_parts/v2,7,emblem,emblema,emblem,
+partes,car_parts/v2,8,fog_light,faro de niebla (antiniebla),left_fog_light; right_fog_lights; fog_lights,fusiona izq./der. y fog_lights
+partes,car_parts/v2,9,front_door,puerta delantera,left_front_door; right_front_door,fusiona izq./der.
+partes,car_parts/v2,10,front_door_glass,cristal de puerta delantera,left_front_glass; right_front_glass,fusiona izq./der.
+partes,car_parts/v2,11,front_fender,salpicadera delantera,front_fender,
+partes,car_parts/v2,12,fuel_cover,tapa del tanque de gasolina,fuel_cover,
+partes,car_parts/v2,13,handle,manija,handle,
+partes,car_parts/v2,14,headlight,faro delantero,left_front_light; right_front_lights,fusiona izq./der.
+partes,car_parts/v2,15,hood,cofre,hood,
+partes,car_parts/v2,16,indicator_light,luz direccional,indicator_light,
+partes,car_parts/v2,17,mudguard,lodera,mudguard,
+partes,car_parts/v2,18,quarter_glass,cristal de custodia (ventanilla fija lateral),left_quater_glass; right_quarter_glass,fusiona izq./der.
+partes,car_parts/v2,19,radiator,parrilla (rejilla del radiador),radiator,
+partes,car_parts/v2,20,roof,toldo (techo),roof,
+partes,car_parts/v2,21,roof_trunk,canastilla o portaequipaje de techo,roof_trunk,
+partes,car_parts/v2,22,side_mirror,espejo lateral,side_mirror,
+partes,car_parts/v2,23,side_step,estribo lateral,side_steps,renombrada (side_steps)
+partes,car_parts/v2,24,step,escalón (estribo),step,traducción por verificar con la muestra visual
+partes,car_parts/v2,25,taillight,calavera (luz trasera),left_back_lights; right_back_light,fusiona izq./der.
+partes,car_parts/v2,26,tire,llanta (neumático),tire,
+partes,car_parts/v2,27,trunk,cajuela,trunk,
+partes,car_parts/v2,28,wheel,rin,wheel,
+partes,car_parts/v2,29,windshield,parabrisas,front_glass,renombrada: en el dataset front_glass es el parabrisas (hallazgo h)
