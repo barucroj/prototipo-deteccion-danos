@@ -1,4 +1,4 @@
-"""Turn M3 reports into what the web interface shows. No Streamlit, no torch.
+"""Turn M3 and M4 reports into what the web interface shows. No Streamlit, no torch.
 
 Kept apart from :mod:`src.app.streamlit_app` so the tables and counts are
 tested with plain dicts.
@@ -6,8 +6,7 @@ tested with plain dicts.
 
 from __future__ import annotations
 
-from collections import Counter
-from typing import Dict, List
+from typing import List
 
 import cv2
 import numpy as np
@@ -21,6 +20,8 @@ DAMAGE_LABELS = {
     "lamp broken": "Faro roto",
     "tire flat": "Llanta ponchada",
 }
+#: M4 state -> label shown to the user.
+STATE_LABELS = {"nuevo": "Nuevo", "preexistente": "Preexistente", "no_visible": "No visible"}
 UNASSIGNED = "Sin parte asignada"
 
 
@@ -49,20 +50,22 @@ def part_rows(report: dict) -> List[dict]:
              "Área (px)": p["area_px"]} for p in report["partes"]]
 
 
-def count_by_type(report: dict) -> Dict[str, int]:
-    return dict(Counter(damage_label(d["tipo"]) for d in report["danos"]))
-
-
-def type_count_rows(report_a: dict, report_b: dict) -> List[dict]:
-    """Damage counts per type in A and in B, every type present in either.
-
-    Descriptive only: a type with the same count in both images may still
-    hold new damages. Telling new from pre-existing is M4's job.
-    """
-    counts_a, counts_b = count_by_type(report_a), count_by_type(report_b)
-    order = [label for label in DAMAGE_LABELS.values() if label in counts_a or label in counts_b]
-    order += sorted((set(counts_a) | set(counts_b)) - set(order))
-    return [{"Tipo": t, "A (antes)": counts_a.get(t, 0), "B (después)": counts_b.get(t, 0)} for t in order]
+def comparison_rows(report: dict) -> List[dict]:
+    """One row per damage of an M4 report, the new ones first."""
+    order = list(STATE_LABELS)
+    rows = []
+    for dano in sorted(report["danos"], key=lambda d: order.index(d["estado"])):
+        rows.append({
+            "Estado": STATE_LABELS[dano["estado"]],
+            "Tipo": damage_label(dano["tipo"]),
+            "Parte": dano["parte"] or UNASSIGNED,
+            "Confianza": round(dano["confianza"], 2),
+            "ID A": dano["id_a"] or "—",
+            "ID B": dano["id_b"] or "—",
+            "Distancia": dano["distancia"],
+            "Revisar": "Sí" if dano["requiere_revision"] else "No",
+        })
+    return rows
 
 
 def to_display(image_bgr: np.ndarray, max_side: int = 1600) -> np.ndarray:

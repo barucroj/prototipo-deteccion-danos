@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from src.app.view import UNASSIGNED, count_by_type, damage_rows, part_rows, to_display, type_count_rows
+from src.app.view import UNASSIGNED, comparison_rows, damage_rows, part_rows, to_display
 
 
 def dano(id_, tipo, parte=None, parte_id=None):
@@ -27,17 +27,20 @@ def test_part_rows():
     assert part_rows(REPORT_A) == [{"ID": "p-01", "Parte": "front_door", "Confianza": 0.91, "Área (px)": 500}]
 
 
-def test_counts_per_type_cover_both_images_in_fixed_order():
-    assert count_by_type(REPORT_B) == {"Rayón": 2, "Golpe": 1}
-    assert type_count_rows(REPORT_A, REPORT_B) == [
-        {"Tipo": "Golpe", "A (antes)": 0, "B (después)": 1},
-        {"Tipo": "Rayón", "A (antes)": 1, "B (después)": 2},
-    ]
+def compared(estado, id_a, id_b, parte=None, revisar=False):
+    return {"estado": estado, "tipo": "dent", "parte": parte, "confianza": 0.876, "id_a": id_a, "id_b": id_b,
+            "distancia": 0.04 if id_a and id_b else None, "requiere_revision": revisar}
 
 
-def test_unknown_type_is_kept_after_the_known_ones():
-    report = {"partes": [], "danos": [dano("B-01", "rust"), dano("B-02", "dent")]}
-    assert [r["Tipo"] for r in type_count_rows({"partes": [], "danos": []}, report)] == ["Golpe", "rust"]
+def test_comparison_rows_put_new_damages_first_and_translate():
+    report = {"danos": [compared("no_visible", "A-02", None, "hood", True),
+                        compared("preexistente", "A-01", "B-01", "hood"),
+                        compared("nuevo", None, "B-02", None, True)]}
+    rows = comparison_rows(report)
+    assert [r["Estado"] for r in rows] == ["Nuevo", "Preexistente", "No visible"]
+    assert rows[0] == {"Estado": "Nuevo", "Tipo": "Golpe", "Parte": UNASSIGNED, "Confianza": 0.88,
+                       "ID A": "—", "ID B": "B-02", "Distancia": None, "Revisar": "Sí"}
+    assert rows[1]["Distancia"] == 0.04 and rows[1]["Revisar"] == "No"
 
 
 def test_to_display_downscales_large_images_and_converts_to_rgb():

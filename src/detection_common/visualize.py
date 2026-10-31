@@ -27,6 +27,17 @@ def color_for_label(label: int):
     return _PALETTE[int(label) % len(_PALETTE)]
 
 
+def put_label(image_bgr, text: str, origin, scale: float, color) -> None:
+    """Text on a filled background, kept inside the image."""
+    thickness = max(1, int(round(scale * 2)))
+    (text_w, text_h), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
+    height, width = image_bgr.shape[:2]
+    x = int(min(max(origin[0], 0), max(width - text_w, 0)))
+    y = int(min(max(origin[1], text_h + baseline), height - baseline))
+    cv2.rectangle(image_bgr, (x, y - text_h - baseline), (x + text_w, y + baseline), color, -1)
+    cv2.putText(image_bgr, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thickness, cv2.LINE_AA)
+
+
 def draw_detections(image_bgr, boxes, labels, scores, categories,
                     masks=None, mask_alpha: float = 0.45, thickness: int = 2):
     """Draw boxes, class names, scores and (optionally) masks onto an image.

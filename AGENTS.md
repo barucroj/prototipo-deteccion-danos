@@ -50,7 +50,8 @@ menciona siamesas: solo tenía una descripción genérica ("detectar tallones y 
    - Clasifica cada daño como **nuevo** (en B sin pareja en A), **preexistente** (en A y B) o
      **no visible** (en A y no en B; se marca para revisión, no se descarta).
    - Salida: reporte JSON y mapa de cambios PNG sobre B.
-   - Supone que A y B son de la misma vista; lo garantiza la metodología de captura, no el código.
+   - A y B deben ser la misma vista: lo pide la metodología de captura y lo comprueba
+     `view_check.py`; un par que no pasa no se clasifica salvo que el agente lo fuerce.
 5. **Orquestador** A→B (M1→M2→M3→M4, cargando cada modelo una sola vez; p. ej. `src/pipeline/`)
    e **interfaz web mínima en Streamlit** (carga del par A/B y visualización del reporte).
 
@@ -63,14 +64,14 @@ Espiral de Boehm con 4 vueltas (una por módulo M1-M4), seguidas de integración
 cierre. **Fecha final: 23 nov 2026.** El roadmap de 5 sprints (Sprint 1 Preprocesamiento …
 Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen.
 
-## Estado real (rama `feature/streamlit-app`, 2026-10-16)
+## Estado real (rama `feature/m4-report`, 2026-10-30)
 | Pieza | Estado |
 |---|---|
 | M1 | **Hecho.** Validación de formato/resolución, carga con EXIF, reflejos y CLAHE opcionales, metadatos (`pipeline.py`), sin resize ni ImageNet; transform para entrenar/evaluar con M1 y experimento de AP, con pruebas. Resultado: con los modelos vigentes, M1 **no mejora** el AP (los reflejos lo empeoran; ver la sección de M1). `normalization.py` (512×512 + ImageNet) sigue en el repo pero fuera del camino hacia los detectores. |
 | M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN, 29 clases finales) **entrenado** el 2026-09-29 (ver Checkpoints): test box AP 0.6041, mask AP 0.5779; supera a v1 en AP de caja (+0.028, IC 95 % [+0.008, +0.047]) pero no en AP50. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. |
 | M3 | Modelo vigente: `damage/v2` (test: box AP 0.5275, mask AP 0.5075; frente a `damage/v1` las diferencias no son distinguibles del ruido, ver Checkpoints). Asignación a partes **hecha** (`src/m3_damage/assignment/`): parte con mayor solapamiento (mín. 0.5, partes con confianza ≥ 0.7), `pos_relativa`, JSON con `parte_id` por instancia, PNG por daño e imagen anotada, con pruebas. |
-| M4 | No existe. |
-| Orquestador / Streamlit | **Versión mínima** (2026-10-16): `src/pipeline/orchestrator.py` corre M1→M2→M3 sobre A y B y `src/app/streamlit_app.py` lo muestra. Sin M4: la pestaña de comparación solo da conteos por tipo. No probada a mano en navegador. |
+| M4 | **Código completo** (2026-10-30): `src/m4_comparison/` empareja partes, clasifica cada daño como nuevo/preexistente/no visible, arma el reporte JSON de la sección 4.9.2 y dibuja el mapa de cambios PNG; conectado al orquestador. Falta **medirlo**: umbrales (0.25 partes, 0.15 daños) **sin calibrar** y sin pares A/B. |
+| Orquestador / Streamlit | **Flujo completo** (2026-10-30): `src/pipeline/orchestrator.py` corre M1→M2→M3→M4 y `src/app/streamlit_app.py` muestra resumen, mapa y tabla por daño. La interfaz se renderizó con `AppTest` y un resultado real, pero la carga de archivos sigue **sin probarse a mano en navegador**. |
 | Pares A/B con ground truth | No existen (ver "Gap conocido"). |
 
 ## Hallazgos técnicos (medidos, no supuestos)
@@ -255,6 +256,8 @@ src/
 ├── detection_common/   config.py · coco_dataset.py · model.py · engine.py · trainer.py
 │                       coco_eval.py · transforms.py · predict.py · visualize.py
 │                       audit.py · watch.py
+├── m4_comparison/      matching.py · parts.py · damages.py · report.py · render.py
+│                       view_check.py
 ├── pipeline/           orchestrator.py   (orquestador A/B)
 └── app/                streamlit_app.py · view.py   (interfaz web)
 
@@ -269,6 +272,8 @@ tests/
 │   └── assignment/     test_assign.py · test_analyze.py · manual_inference.py · outputs/
 ├── detection_common/   test_coco_dataset · test_model · test_config · test_coco_eval
 │                       test_transforms · test_audit · test_freeze_bn
+├── m4_comparison/      test_match_parts.py · test_classify_damages.py · test_report.py
+│                       test_render.py · test_view_check.py
 ├── pipeline/           test_orchestrator.py
 └── app/                test_view.py
 ```
@@ -409,28 +414,89 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
 `crack` es 39 % objetos pequeños (<32² px), lo que explica su AP bajo en v1.
 
 ### Pendiente
-- **M4**: emparejamiento húngaro + reporte + mapa de cambios, paquete propio con pruebas sobre
-  JSON sintéticos. Al terminarlo, conectarlo en `PairPipeline.analyze_pair` (línea marcada) y
-  reemplazar los conteos de la pestaña "Comparación (M4)".
+- **M4**: calibrar los umbrales y medir P/R/F1 con pares A/B; falta el script de evaluación y
+  el formato de ground truth.
 - **M2**: el umbral de partes es 0.7 en la asignación (`DEFAULT_PART_THRESHOLD`) y 0.5 en los
   demos, sin justificación medida; falta resolver partes que se solapan (hoy el NMS de
   torchvision es por clase y no resuelve solapes entre clases distintas).
 
+## `src/m4_comparison/` — M4
+Lógica determinista sobre los reportes JSON de M3 (`partes` con `id`/`clase_parte`/`bbox`,
+`danos` con `id`/`tipo`/`bbox`/`parte_id`/`pos_relativa`); sin torch ni modelos.
+- `matching.py` — `match_points()`: método húngaro (`linear_sum_assignment`) con umbral de
+  distancia aplicado **antes** de resolver (los pares inválidos cuestan más que cualquier suma
+  válida), así maximiza el número de pares válidos y luego minimiza la distancia. Filtrar
+  después del húngaro sin umbral puede perder pares (caso en las pruebas).
+- `parts.py` — `match_parts()`: empareja partes **de la misma clase** por el centro de su caja
+  normalizado al tamaño de cada imagen (A y B pueden tener otra resolución).
+  `DEFAULT_PART_MAX_DISTANCE = 0.25`. Devuelve `PartMatching(pares, solo_a, solo_b)`.
+- `damages.py` — `classify_damages()` / `compare_reports()`; daños del mismo tipo en dos
+  etapas: (1) `"parte"`: dentro de cada par de partes, por `pos_relativa`; (2) `"imagen"`: lo
+  que queda (sin parte, parte vista en una sola foto, daño en una unión asignado a partes
+  distintas) por centro de caja normalizado a la imagen. `DEFAULT_DAMAGE_MAX_DISTANCE = 0.15`
+  en ambas etapas. Estados `nuevo`, `preexistente` (con `distancia` y `metodo`) y
+  `no_visible`; cada daño aparece exactamente una vez (primero los de B en su orden, luego los
+  de A sin pareja).
+- `report.py` — `build_report()` arma el `ReporteComparacion` de la sección 4.9.2 (`imagen_a`,
+  `imagen_b`, `umbral_distancia`, `resumen`, `danos`, `mapa_cambios`), más lo que piden RF09 y
+  RNF05 y el diseño no traía: `umbral_distancia_partes`, `modelos` y, por daño, `confianza`,
+  `bbox`, `bbox_en_b`, `pos_relativa`, `metodo` y `parte_id`. `requiere_revision` es verdadero
+  para no visibles y daños sin parte. Un no visible no tiene píxeles en B: `bbox_en_b` es una
+  **estimación** (por la parte emparejada o, si no hay, escalando a B). `save_report()` escribe
+  `reporte_par.json` y `mapa_cambios.png`.
+- `render.py` — `draw_change_map()`: nuevo con relleno fuerte y caja gruesa, preexistente con
+  relleno tenue y caja delgada, no visible solo con caja punteada; resumen arriba a la izquierda.
+- `view_check.py` — `check_same_view()`: SIFT + homografía con RANSAC **solo sobre el coche**
+  (unión de máscaras de M2, porque en un patio el fondo es común). Exige `puntos` ≥ 40 y
+  `solape` (IoU del coche de A movido sobre el de B) ≥ 0.5. Si falla, `build_report()` no
+  clasifica nada y no hay mapa (`mapa_cambios: null`); con `forzada` compara, lo registra en
+  `comparacion_forzada` y manda todos los daños a revisión. Comparar nombres de partes **no**
+  sirve: frente de Duster contra frente de Ibiza da 0.80. Medido el 2026-10-30 con 12 fotos
+  propias: 12/12 de misma vista **simulada** aceptadas y 66/66 de vistas o coches distintos
+  rechazadas; los umbrales salieron de esos datos y **están sin calibrar**. Un par real tendrá
+  menos puntos que uno simulado. No demuestra que sea el mismo vehículo: dos unidades idénticas
+  podrían pasar.
+- Sin pares A/B no se pueden calibrar los umbrales. Probado con modelos reales el 2026-10-30:
+  la misma foto como A y B da todo preexistente. Las fotos `rigth` a `rigth4` de la Duster
+  **no** forman pares válidos (son encuadres distintos).
+
+## `scripts/analyze_folder.py`
+M2+M3 sobre todas las fotos de una carpeta, sin GUI: por imagen el JSON de M3, imágenes
+anotadas (daños con parte, todas las partes, todos los daños) y una máscara por daño, más
+`resumen.json`. Default: `data/raw/own-data/TESTS/duster-condicion media-multiples angulos`.
+`docs/etiquetas_modelos.csv`: clases de ambos modelos con nombre en español y etiquetas
+originales.
+
+## `scripts/analyze_pair.py`
+M1→M4 sobre un par, sin GUI: `analyze_pair.py A.jpg B.jpg -o salida/ [--no-validate] [--force]`. Escribe
+los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte_par.json` y
+`mapa_cambios.png`.
+
 ## `src/pipeline/` y `src/app/` — orquestador e interfaz
 - `pipeline/orchestrator.py` — `PairPipeline.from_checkpoints()` carga `car_parts/v2` y
   `damage/v2` una sola vez; `analyze_pair(path_a, path_b, PipelineSettings)` valida **ambas**
-  fotos antes de cualquier inferencia y corre M1 → M2+M3 sobre A y B. `PipelineSettings`:
-  pasos de M1 (reflejos apagados, ver M1), validación de resolución, umbrales de partes (0.7),
-  daños (0.5) y solapamiento (0.5). `PairResult.to_json()` = `{A: {m1, m3, segundos}, B: …,
-  m4: null}`. Probado con modelos falsos en `tests/pipeline/`.
+  fotos antes de cualquier inferencia y corre M1 → M2+M3 sobre A y B y luego M4.
+  `PipelineSettings`: pasos de M1 (reflejos apagados, ver M1), validación de resolución,
+  umbrales de partes (0.7), daños (0.5), solapamiento (0.5), distancias de M4 (0.25 y 0.15) y
+  verificación de vista (40 puntos, solape 0.5). `PairResult` trae `comparison` (reporte de M4)
+  y `change_map` (BGR, `None` si el par quedó bloqueado). `compare(result_a, result_b, settings,
+  force)` repite solo M4, sin inferencia: lo usa el botón "Comparar de todos modos".
+  `PairResult.to_json()` = `{A: {m1, m3, segundos}, B: …, m4: {…}}`. Probado con modelos falsos
+  en `tests/pipeline/`.
 - `app/streamlit_app.py` — `./venv_cuda/Scripts/python.exe -m streamlit run
   src/app/streamlit_app.py`. Carga de A y B, ajustes en la barra lateral, una pestaña por
   imagen (vista daños+parte / todas las partes / todos los daños, tabla de daños, partes y
-  metadatos de M1), pestaña de M4 con aviso y conteos por tipo, y descarga del JSON del par.
-- `app/view.py` — tablas, conteos, nombres en español de las clases de CarDD y reducción de la
+  metadatos de M1), pestaña de M4 primero (conteos por estado, mapa de cambios, tabla por daño y
+  descarga del PNG) y descarga del JSON del par.
+- `app/view.py` — tablas, nombres en español de las clases de CarDD y estados de M4, y reducción de la
   imagen para mostrarla (lado largo ≤ 1600); sin Streamlit ni torch, probado en `tests/app/`.
 - Medido el 2026-10-16 (RTX 3050) con fotos propias de 1600×1200 (hay que desactivar la
   validación): ~4-5.5 s de M2+M3 por imagen, incluido el calentamiento de CUDA.
+- Medido el 2026-10-30 (RTX 3050), par completo M1→M4 con los dos modelos cargados, foto propia
+  **reescalada** a 4000×3000 (vale para memoria y tiempo, no para calidad de detección): mediana
+  ~5 s por par (4.2-6.0 s, 4 corridas). **Pico de GPU 5.5 GB asignados y 6.5 GB reservados**: el
+  margen frente a los 6 GB de RNF02 es mínimo, y las cifras de 4.07 y 2.72 GB de cada modelo por
+  separado no lo muestran.
 
 ## Checkpoints (`models/checkpoints/`, en `.gitignore`)
 - `car_parts/v1/` — Faster R-CNN, solo cajas, 20 épocas, sin augmentation. Checkpoint viejo:
@@ -511,8 +577,10 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
 `tests/m3_damage/assignment/` (`test_assign.py`, `test_analyze.py`),
 `tests/m1_preprocessing/` (`test_validation.py`, `test_pipeline.py`,
 `test_specular_removal.py`, `test_normalization.py`, `test_torch_transform.py`,
-`test_ap_experiment.py`), `tests/pipeline/test_orchestrator.py` y `tests/app/test_view.py`.
-Resultado al 2026-10-16: 230 pasan.
+`test_ap_experiment.py`), `tests/m4_comparison/` (`test_match_parts.py`,
+`test_classify_damages.py`, `test_report.py`, `test_render.py`, `test_view_check.py`),
+`tests/pipeline/test_orchestrator.py` y `tests/app/test_view.py`.
+Resultado al 2026-10-30: 283 pasan.
 Los `manual_inference.py` de `tests/m2_parts/`, `tests/m3_damage/detector/` y
 `tests/m3_damage/assignment/` son demos con GUI, no se colectan.
 
@@ -523,10 +591,11 @@ Los `manual_inference.py` de `tests/m2_parts/`, `tests/m3_damage/detector/` y
    protocolo es la escala (ver auditoría de CarDD). Pendiente opcional: corrida A/B de
    BatchNorm en car_parts.
 2. ~~M3: asignación a partes + JSON, con pruebas~~ — hecho.
-3. M4: emparejamiento + reporte, con pruebas.
+3. ~~M4: emparejamiento, clasificación, reporte JSON y mapa de cambios PNG~~ — hecho
+   (2026-10-30); falta calibrar y medir.
 4. ~~M1 compatible con los detectores + experimento de AP con y sin preprocesamiento~~ —
    hecho; M1 no mejora el AP (ver la sección de M1).
-5. Orquestador + Streamlit: versión mínima hecha; falta conectar M4.
+5. Orquestador + Streamlit: flujo completo conectado; falta probar en navegador.
 6. Evaluación end-to-end con pares A/B propios (P, R, F1, Accuracy).
 7. Limpieza de `README`, `setup.py` y `requirements.txt`: hecha.
 
