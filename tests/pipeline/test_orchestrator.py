@@ -32,6 +32,16 @@ class FakeModel:
                  "boxes": boxes, "masks": masks}]
 
 
+class SequenceModel:
+    """Answers each call with the next model: one output for A, another for B."""
+
+    def __init__(self, models):
+        self.models = iter(models)
+
+    def __call__(self, images):
+        return next(self.models)(images)
+
+
 def make_pipeline(damage_rel_boxes=((0.1, 0.1, 0.2, 0.2),)):
     parts = FakeModel([1, 2], [0.95, 0.4], [(0.0, 0.0, 0.5, 1.0), (0.5, 0.0, 1.0, 1.0)])
     n = len(damage_rel_boxes)
@@ -60,14 +70,41 @@ def test_pair_runs_m1_and_m3_on_both_images(tmp_path):
     assert [p["clase_parte"] for p in pair.b.analysis.report["partes"]] == ["front_door"]
     dano = pair.b.analysis.report["danos"][0]
     assert dano["id"] == "B-01" and dano["parte"] == "front_door"
-    assert pair.comparison is None
+
+
+def test_pair_includes_the_m4_report_and_change_map(tmp_path):
+    pair = make_pipeline().analyze_pair(write_image(tmp_path / "a.png"), write_image(tmp_path / "b.png"), SMALL,
+                                        name_a="entrega.png", name_b="devolucion.png")
+    assert pair.comparison["imagen_a"] == "entrega.png" and pair.comparison["imagen_b"] == "devolucion.png"
+    # Same fake detections in both images: the damage is preexisting.
+    assert pair.comparison["resumen"] == {"nuevos": 0, "preexistentes": 1, "no_visibles": 0}
+    assert pair.change_map.shape == pair.b.image.shape
+    assert not np.array_equal(pair.change_map, pair.b.image)
+
+
+def test_m4_finds_a_new_damage_and_records_the_thresholds(tmp_path):
+    pipeline = make_pipeline()
+    pipeline.damage_model = SequenceModel([FakeModel([], [], []), FakeModel([2], [0.9], [(0.1, 0.1, 0.2, 0.2)])])
+    settings = PipelineSettings(preprocess=PreprocessConfig(specular=False), validate=False,
+                                part_max_distance=0.2, damage_max_distance=0.1)
+    pair = pipeline.analyze_pair(write_image(tmp_path / "a.png"), write_image(tmp_path / "b.png"), settings)
+    assert pair.comparison["resumen"] == {"nuevos": 1, "preexistentes": 0, "no_visibles": 0}
+    assert pair.comparison["danos"][0]["id_b"] == "B-01"
+    assert pair.comparison["umbral_distancia"] == 0.1 and pair.comparison["umbral_distancia_partes"] == 0.2
+
+
+def test_report_records_the_checkpoints(tmp_path):
+    pipeline = make_pipeline()
+    pipeline.checkpoints = {"partes": "parts.pth", "danos": "damage.pth"}
+    pair = pipeline.analyze_pair(write_image(tmp_path / "a.png"), write_image(tmp_path / "b.png"), SMALL)
+    assert pair.comparison["modelos"] == {"partes": "parts.pth", "danos": "damage.pth"}
 
 
 def test_to_json_is_serializable(tmp_path):
     pair = make_pipeline().analyze_pair(write_image(tmp_path / "a.png"), write_image(tmp_path / "b.png"), SMALL)
     record = json.loads(json.dumps(pair.to_json()))
     assert set(record) == {"A", "B", "m4"}
-    assert record["m4"] is None
+    assert record["m4"]["mapa_cambios"] == "mapa_cambios.png"
     assert set(record["A"]["segundos"]) == {"m1", "m2_m3"}
 
 
