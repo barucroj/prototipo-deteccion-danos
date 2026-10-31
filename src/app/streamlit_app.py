@@ -2,9 +2,8 @@
 
     ./venv_cuda/Scripts/python.exe -m streamlit run src/app/streamlit_app.py
 
-Runs M1 -> M2 -> M3 on both photos through :class:`src.pipeline.orchestrator.PairPipeline`.
-The models are loaded once per server process (``st.cache_resource``). M4 is
-not implemented yet; its tab says so and shows only descriptive counts.
+Runs M1 -> M2 -> M3 -> M4 on the pair through :class:`src.pipeline.orchestrator.PairPipeline`.
+The models are loaded once per server process (``st.cache_resource``).
 """
 
 import json
@@ -12,17 +11,19 @@ import os
 import sys
 import tempfile
 
+import cv2
 import streamlit as st
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.app.view import damage_rows, part_rows, to_display, type_count_rows  # noqa: E402
+from src.app.view import comparison_rows, damage_rows, part_rows, to_display  # noqa: E402
 from src.detection_common.visualize import draw_detections  # noqa: E402
 from src.m1_preprocessing.pipeline import PreprocessConfig  # noqa: E402
 from src.m1_preprocessing.validation import ImageValidationError  # noqa: E402
 from src.m3_damage.assignment.render import draw_analysis  # noqa: E402
+from src.m4_comparison.report import CHANGE_MAP_FILE, REPORT_FILE  # noqa: E402
 from src.pipeline.orchestrator import (DEFAULT_DAMAGE_CHECKPOINT, DEFAULT_PARTS_CHECKPOINT,  # noqa: E402
                                        PairPipeline, PipelineSettings)
 
@@ -62,13 +63,21 @@ def sidebar() -> PipelineSettings:
         "Solapamiento mínimo daño→parte", 0.05, 0.95, 0.50, 0.05,
         help="Fracción del daño que debe caer dentro de una parte para asignársela.")
 
+    st.sidebar.subheader("M4. Comparación")
+    distance_help = "Sin calibrar: aún no hay pares A/B con ground truth."
+    part_max_distance = st.sidebar.slider("Distancia máxima entre partes", 0.05, 0.50, 0.25, 0.05,
+                                          help=distance_help)
+    damage_max_distance = st.sidebar.slider("Distancia máxima entre daños", 0.05, 0.50, 0.15, 0.05,
+                                            help=distance_help)
+
     with st.sidebar.expander("Modelos"):
         st.caption(f"Partes: `{os.path.relpath(DEFAULT_PARTS_CHECKPOINT, PROJECT_ROOT)}`")
         st.caption(f"Daños: `{os.path.relpath(DEFAULT_DAMAGE_CHECKPOINT, PROJECT_ROOT)}`")
 
     return PipelineSettings(preprocess=PreprocessConfig(specular=specular, clahe=clahe), validate=validate,
                             part_threshold=part_threshold, damage_threshold=damage_threshold,
-                            min_overlap=min_overlap)
+                            min_overlap=min_overlap, part_max_distance=part_max_distance,
+                            damage_max_distance=damage_max_distance)
 
 
 def show_image_result(result, title: str) -> None:
@@ -101,15 +110,54 @@ def show_image_result(result, title: str) -> None:
         st.json(result.metadata)
 
 
+def store_pair(pair) -> None:
+    st.session_state["pair"] = pair
+    if pair.change_map is None:
+        st.session_state.pop("change_map_png", None)
+    else:
+        st.session_state["change_map_png"] = cv2.imencode(".png", pair.change_map)[1].tobytes()
+
+
+def show_blocked_pair(pair) -> None:
+    view = pair.comparison["verificacion_vista"]
+    st.error("**Par no comparable.** A y B no parecen la misma vista del mismo vehículo, "
+             "así que no se clasificó ningún daño. Revisa que las fotos correspondan.")
+    st.caption(f"Puntos coincidentes sobre el vehículo: {view['puntos']} (mínimo {view['umbral_puntos']}) · "
+               f"solape: {view['solape']:.2f} (mínimo {view['umbral_solape']:.2f})")
+    if st.button("Comparar de todos modos"):
+        pipeline = get_pipeline(DEFAULT_PARTS_CHECKPOINT, DEFAULT_DAMAGE_CHECKPOINT)
+        pair.comparison, pair.change_map = pipeline.compare(pair.a, pair.b, st.session_state["settings"], force=True)
+        store_pair(pair)
+        st.rerun()
+
+
 def show_comparison(pair) -> None:
-    st.warning("**M4 (comparación antes/después) aún no está implementado.** "
-               "Todavía no se clasifica cada daño como nuevo, preexistente o no visible.")
-    st.markdown("Conteo de daños detectados por tipo (descriptivo; no indica cuáles son nuevos):")
-    rows = type_count_rows(pair.a.analysis.report, pair.b.analysis.report)
+    report = pair.comparison
+    if pair.change_map is None:
+        show_blocked_pair(pair)
+        return
+    if report["comparacion_forzada"]:
+        st.warning("**Comparación forzada.** La verificación indicó que A y B podrían no ser la misma vista: "
+                   "todos los daños quedan marcados para revisión.")
+
+    summary = report["resumen"]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Nuevos", summary["nuevos"])
+    c2.metric("Preexistentes", summary["preexistentes"])
+    c3.metric("No visibles", summary["no_visibles"])
+
+    st.image(to_display(pair.change_map), caption="Mapa de cambios sobre la imagen B",
+             use_container_width=True)
+    st.caption("Los no visibles se dibujan con contorno punteado en su posición estimada. "
+               "Los umbrales de distancia aún no están calibrados con pares reales.")
+
+    rows = comparison_rows(report)
     if rows:
         st.dataframe(rows, use_container_width=True, hide_index=True)
     else:
         st.caption("No se detectaron daños en ninguna de las dos imágenes.")
+    st.download_button("Descargar mapa de cambios (PNG)", st.session_state["change_map_png"],
+                       file_name=CHANGE_MAP_FILE, mime="image/png")
 
 
 def main() -> None:
@@ -134,8 +182,9 @@ def main() -> None:
             path_b = save_upload(upload_b, os.path.join(folder, "B"))
             try:
                 with st.spinner("Analizando A y B..."):
-                    st.session_state["pair"] = pipeline.analyze_pair(
-                        path_a, path_b, settings, name_a=upload_a.name, name_b=upload_b.name)
+                    store_pair(pipeline.analyze_pair(path_a, path_b, settings,
+                                                     name_a=upload_a.name, name_b=upload_b.name))
+                st.session_state["settings"] = settings
             except ImageValidationError as error:
                 st.session_state.pop("pair", None)
                 st.error(str(error))
@@ -145,17 +194,17 @@ def main() -> None:
         return
 
     st.divider()
-    tab_a, tab_b, tab_m4, tab_json = st.tabs(["Imagen A", "Imagen B", "Comparación (M4)", "JSON"])
+    tab_m4, tab_a, tab_b, tab_json = st.tabs(["Comparación (M4)", "Imagen A", "Imagen B", "JSON"])
+    with tab_m4:
+        show_comparison(pair)
     with tab_a:
         show_image_result(pair.a, "A")
     with tab_b:
         show_image_result(pair.b, "B")
-    with tab_m4:
-        show_comparison(pair)
     with tab_json:
         report = pair.to_json()
         st.download_button("Descargar reporte JSON", json.dumps(report, indent=2, ensure_ascii=False),
-                           file_name="reporte_par.json", mime="application/json")
+                           file_name=REPORT_FILE, mime="application/json")
         st.json(report, expanded=False)
 
 
