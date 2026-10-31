@@ -61,5 +61,10 @@ def test_damage_without_a_mask_still_gets_its_box():
     assert (canvas[250, 150] == STATE_COLORS["nuevo"]).all()
 
 
+def test_forced_comparison_carries_a_warning():
+    forced = dict(report(), comparacion_forzada=True)
+    assert not np.array_equal(draw_change_map(blank(), forced), draw_change_map(blank(), report()))
+
+
 def test_summary_is_drawn_without_damages():
     assert not np.array_equal(draw_change_map(blank(), report()), blank())

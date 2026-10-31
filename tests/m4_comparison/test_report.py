@@ -92,9 +92,39 @@ def test_expected_box_stays_inside_image_b():
         == [150, 0, 200, 100]
 
 
+def test_failed_view_check_blocks_the_comparison():
+    vista = {"comparable": False, "puntos": 3, "solape": 0.1, "umbral_puntos": 40, "umbral_solape": 0.5}
+    result = build_report(*three_states(), vista=vista)
+    assert result["verificacion_vista"] == vista and result["comparacion_forzada"] is False
+    assert result["danos"] == [] and result["mapa_cambios"] is None
+    assert result["resumen"] == {"nuevos": 0, "preexistentes": 0, "no_visibles": 0}
+
+
+def test_forced_comparison_sends_every_damage_to_review():
+    vista = {"comparable": False, "puntos": 3, "solape": 0.1, "umbral_puntos": 40, "umbral_solape": 0.5}
+    result = build_report(*three_states(), vista=vista, forzada=True)
+    assert result["resumen"] == {"nuevos": 1, "preexistentes": 1, "no_visibles": 1}
+    assert result["comparacion_forzada"] is True and result["mapa_cambios"] == CHANGE_MAP_FILE
+    assert all(d["requiere_revision"] for d in result["danos"])
+
+
+def test_passed_view_check_changes_nothing():
+    vista = {"comparable": True, "puntos": 90, "solape": 0.8, "umbral_puntos": 40, "umbral_solape": 0.5}
+    result = build_report(*three_states(), vista=vista)
+    assert by_state(result, "preexistente")["requiere_revision"] is False
+
+
 def test_empty_pair():
     result = build_report(report("A", [], []), report("B", [], []))
     assert result["danos"] == [] and result["resumen"] == {"nuevos": 0, "preexistentes": 0, "no_visibles": 0}
+
+
+def test_blocked_pair_writes_only_the_json(tmp_path):
+    vista = {"comparable": False, "puntos": 0, "solape": 0.0, "umbral_puntos": 40, "umbral_solape": 0.5}
+    paths = save_report(build_report(*three_states(), vista=vista), None, str(tmp_path))
+    assert paths["change_map"] is None
+    assert not (tmp_path / CHANGE_MAP_FILE).exists()
+    assert (tmp_path / REPORT_FILE).exists()
 
 
 def test_save_report_writes_both_files(tmp_path):

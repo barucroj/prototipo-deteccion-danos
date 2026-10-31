@@ -110,8 +110,36 @@ def show_image_result(result, title: str) -> None:
         st.json(result.metadata)
 
 
+def store_pair(pair) -> None:
+    st.session_state["pair"] = pair
+    if pair.change_map is None:
+        st.session_state.pop("change_map_png", None)
+    else:
+        st.session_state["change_map_png"] = cv2.imencode(".png", pair.change_map)[1].tobytes()
+
+
+def show_blocked_pair(pair) -> None:
+    view = pair.comparison["verificacion_vista"]
+    st.error("**Par no comparable.** A y B no parecen la misma vista del mismo vehículo, "
+             "así que no se clasificó ningún daño. Revisa que las fotos correspondan.")
+    st.caption(f"Puntos coincidentes sobre el vehículo: {view['puntos']} (mínimo {view['umbral_puntos']}) · "
+               f"solape: {view['solape']:.2f} (mínimo {view['umbral_solape']:.2f})")
+    if st.button("Comparar de todos modos"):
+        pipeline = get_pipeline(DEFAULT_PARTS_CHECKPOINT, DEFAULT_DAMAGE_CHECKPOINT)
+        pair.comparison, pair.change_map = pipeline.compare(pair.a, pair.b, st.session_state["settings"], force=True)
+        store_pair(pair)
+        st.rerun()
+
+
 def show_comparison(pair) -> None:
     report = pair.comparison
+    if pair.change_map is None:
+        show_blocked_pair(pair)
+        return
+    if report["comparacion_forzada"]:
+        st.warning("**Comparación forzada.** La verificación indicó que A y B podrían no ser la misma vista: "
+                   "todos los daños quedan marcados para revisión.")
+
     summary = report["resumen"]
     c1, c2, c3 = st.columns(3)
     c1.metric("Nuevos", summary["nuevos"])
@@ -154,10 +182,9 @@ def main() -> None:
             path_b = save_upload(upload_b, os.path.join(folder, "B"))
             try:
                 with st.spinner("Analizando A y B..."):
-                    pair = pipeline.analyze_pair(path_a, path_b, settings,
-                                                 name_a=upload_a.name, name_b=upload_b.name)
-                st.session_state["pair"] = pair
-                st.session_state["change_map_png"] = cv2.imencode(".png", pair.change_map)[1].tobytes()
+                    store_pair(pipeline.analyze_pair(path_a, path_b, settings,
+                                                     name_a=upload_a.name, name_b=upload_b.name))
+                st.session_state["settings"] = settings
             except ImageValidationError as error:
                 st.session_state.pop("pair", None)
                 st.error(str(error))

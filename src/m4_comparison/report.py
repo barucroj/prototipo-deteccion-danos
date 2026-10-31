@@ -8,12 +8,17 @@ reports, so it is testable without models.
 A damage of A with no pair has no pixels in B. ``bbox_en_b`` is where it would
 be expected there: through the matched part when there is one, otherwise by
 scaling to the size of B. It is an estimate, used to draw the change map.
+
+A pair that fails the view check of :mod:`src.m4_comparison.view_check` is
+blocked: no damage is classified and there is no change map, unless the agent
+forces the comparison, which is recorded and sends every damage to review.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from collections import Counter
 from typing import Dict, List, Mapping, Optional
 
 import cv2
@@ -58,7 +63,7 @@ def expected_box_in_b(dano_a: dict, report_a: dict, report_b: dict, partes: Part
 
 
 def _compared_damage(status: DamageStatus, by_id_a: Mapping[str, dict], by_id_b: Mapping[str, dict],
-                     report_a: dict, report_b: dict, partes: PartMatching) -> dict:
+                     report_a: dict, report_b: dict, partes: PartMatching, forzada: bool) -> dict:
     # The damage in B describes the pair; a not visible one exists only in A.
     dano = by_id_b[status.id_b] if status.id_b else by_id_a[status.id_a]
     if status.estado == NO_VISIBLE:
@@ -78,14 +83,15 @@ def _compared_damage(status: DamageStatus, by_id_a: Mapping[str, dict], by_id_b:
         "pos_relativa": dano["pos_relativa"],
         "distancia": status.distancia,
         "metodo": status.metodo,
-        "requiere_revision": status.estado == NO_VISIBLE or status.parte is None,
+        "requiere_revision": forzada or status.estado == NO_VISIBLE or status.parte is None,
     }
 
 
 def build_report(report_a: dict, report_b: dict,
                  part_max_distance: float = DEFAULT_PART_MAX_DISTANCE,
                  damage_max_distance: float = DEFAULT_DAMAGE_MAX_DISTANCE,
-                 modelos: Optional[Dict[str, str]] = None) -> dict:
+                 modelos: Optional[Dict[str, str]] = None, vista: Optional[dict] = None,
+                 forzada: bool = False) -> dict:
     """Compare two M3 reports and return the M4 report of the pair.
 
     Args:
@@ -93,38 +99,51 @@ def build_report(report_a: dict, report_b: dict,
         part_max_distance / damage_max_distance: Thresholds of M4, recorded in
             the report.
         modelos: Checkpoints that produced the M3 reports, ``None`` if unknown.
+        vista: View check as a dict, ``None`` if it was not run.
+        forzada: The agent chose to compare a pair that failed the check.
     """
-    comparison = compare_reports(report_a, report_b, part_max_distance, damage_max_distance)
-    by_id_a = {d["id"]: d for d in report_a["danos"]}
-    by_id_b = {d["id"]: d for d in report_b["danos"]}
+    blocked = vista is not None and not vista["comparable"] and not forzada
+    danos: List[dict] = []
+    if not blocked:
+        comparison = compare_reports(report_a, report_b, part_max_distance, damage_max_distance)
+        by_id_a = {d["id"]: d for d in report_a["danos"]}
+        by_id_b = {d["id"]: d for d in report_b["danos"]}
+        danos = [_compared_damage(status, by_id_a, by_id_b, report_a, report_b, comparison.partes, forzada)
+                 for status in comparison.danos]
+
+    counts = Counter(d["estado"] for d in danos)
     return {
         "imagen_a": report_a.get("archivo"),
         "imagen_b": report_b.get("archivo"),
         "umbral_distancia": damage_max_distance,
         "umbral_distancia_partes": part_max_distance,
         "modelos": modelos,
+        "verificacion_vista": vista,
+        "comparacion_forzada": forzada,
         "resumen": {
-            "nuevos": comparison.count(NUEVO),
-            "preexistentes": comparison.count(PREEXISTENTE),
-            "no_visibles": comparison.count(NO_VISIBLE),
+            "nuevos": counts[NUEVO],
+            "preexistentes": counts[PREEXISTENTE],
+            "no_visibles": counts[NO_VISIBLE],
         },
-        "danos": [_compared_damage(status, by_id_a, by_id_b, report_a, report_b, comparison.partes)
-                  for status in comparison.danos],
-        "mapa_cambios": CHANGE_MAP_FILE,
+        "danos": danos,
+        "mapa_cambios": None if blocked else CHANGE_MAP_FILE,
     }
 
 
-def save_report(report: dict, change_map: np.ndarray, output_dir: str) -> Dict[str, str]:
+def save_report(report: dict, change_map: Optional[np.ndarray], output_dir: str) -> Dict[str, Optional[str]]:
     """Write the JSON and the change map; ``mapa_cambios`` is relative to the JSON.
 
     Returns:
-        ``{"json": ..., "change_map": ...}`` with the paths written.
+        ``{"json": ..., "change_map": ...}`` with the paths written;
+        ``change_map`` is ``None`` for a blocked pair.
     """
     os.makedirs(output_dir, exist_ok=True)
     json_path = os.path.join(output_dir, REPORT_FILE)
     with open(json_path, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, ensure_ascii=False)
 
+    if report["mapa_cambios"] is None:
+        return {"json": json_path, "change_map": None}
     map_path = os.path.join(output_dir, report["mapa_cambios"])
     cv2.imwrite(map_path, change_map)
     return {"json": json_path, "change_map": map_path}

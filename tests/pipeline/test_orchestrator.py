@@ -49,8 +49,10 @@ def make_pipeline(damage_rel_boxes=((0.1, 0.1, 0.2, 0.2),)):
     return PairPipeline(parts, {1: "front_door", 2: "hood"}, damage, {2: "scratch"}, torch.device("cpu"))
 
 
-def write_image(path, width=320, height=240):
-    cv2.imwrite(str(path), np.full((height, width, 3), 120, dtype=np.uint8))
+def write_image(path, width=320, height=240, seed=0):
+    """Blocks of random color: enough texture for the view check to match the same image."""
+    blocks = np.random.default_rng(seed).integers(0, 255, (height // 8, width // 8, 3), dtype=np.uint8)
+    cv2.imwrite(str(path), cv2.resize(blocks, (width, height), interpolation=cv2.INTER_NEAREST))
     return str(path)
 
 
@@ -91,6 +93,32 @@ def test_m4_finds_a_new_damage_and_records_the_thresholds(tmp_path):
     assert pair.comparison["resumen"] == {"nuevos": 1, "preexistentes": 0, "no_visibles": 0}
     assert pair.comparison["danos"][0]["id_b"] == "B-01"
     assert pair.comparison["umbral_distancia"] == 0.1 and pair.comparison["umbral_distancia_partes"] == 0.2
+
+
+def test_unrelated_photos_are_blocked_without_classifying(tmp_path):
+    pair = make_pipeline().analyze_pair(write_image(tmp_path / "a.png", seed=1),
+                                        write_image(tmp_path / "b.png", seed=2), SMALL)
+    assert pair.comparison["verificacion_vista"]["comparable"] is False
+    assert pair.comparison["comparacion_forzada"] is False
+    assert pair.comparison["danos"] == [] and pair.comparison["mapa_cambios"] is None
+    assert pair.change_map is None
+
+
+def test_blocked_pair_can_be_forced_and_every_damage_needs_review(tmp_path):
+    pipeline = make_pipeline()
+    pair = pipeline.analyze_pair(write_image(tmp_path / "a.png", seed=1),
+                                 write_image(tmp_path / "b.png", seed=2), SMALL)
+    comparison, change_map = pipeline.compare(pair.a, pair.b, SMALL, force=True)
+    assert comparison["comparacion_forzada"] is True
+    assert comparison["resumen"]["preexistentes"] == 1
+    assert all(d["requiere_revision"] for d in comparison["danos"])
+    assert change_map is not None
+
+
+def test_forcing_a_comparable_pair_is_not_recorded_as_forced(tmp_path):
+    pair = make_pipeline().analyze_pair(write_image(tmp_path / "a.png"), write_image(tmp_path / "b.png"), SMALL,
+                                        force=True)
+    assert pair.comparison["comparacion_forzada"] is False
 
 
 def test_report_records_the_checkpoints(tmp_path):

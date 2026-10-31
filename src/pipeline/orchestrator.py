@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -21,6 +21,8 @@ from src.m4_comparison.damages import DEFAULT_DAMAGE_MAX_DISTANCE
 from src.m4_comparison.parts import DEFAULT_PART_MAX_DISTANCE
 from src.m4_comparison.render import draw_change_map
 from src.m4_comparison.report import build_report
+from src.m4_comparison.view_check import (DEFAULT_MIN_VIEW_OVERLAP, DEFAULT_MIN_VIEW_POINTS, car_region,
+                                          check_same_view)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_PARTS_CHECKPOINT = os.path.join(PROJECT_ROOT, "models", "checkpoints", "car_parts", "v2", "best_model.pth")
@@ -44,6 +46,8 @@ class PipelineSettings:
     min_overlap: float = DEFAULT_MIN_OVERLAP
     part_max_distance: float = DEFAULT_PART_MAX_DISTANCE
     damage_max_distance: float = DEFAULT_DAMAGE_MAX_DISTANCE
+    min_view_points: int = DEFAULT_MIN_VIEW_POINTS
+    min_view_overlap: float = DEFAULT_MIN_VIEW_OVERLAP
 
 
 @dataclass
@@ -65,12 +69,15 @@ class ImageResult:
 
 @dataclass
 class PairResult:
-    """Both images plus the M4 report and its change map (BGR, drawn on B)."""
+    """Both images plus the M4 report and its change map (BGR, drawn on B).
+
+    ``change_map`` is ``None`` when the pair failed the view check.
+    """
 
     a: ImageResult
     b: ImageResult
     comparison: dict
-    change_map: np.ndarray
+    change_map: Optional[np.ndarray]
 
     def to_json(self) -> dict:
         """JSON-serializable record of the whole pair (no masks or pixels)."""
@@ -131,8 +138,34 @@ class PairPipeline:
         return ImageResult(image=pre.image, metadata=pre.metadata, analysis=analysis,
                            seconds={"m1": round(m1_seconds, 2), "m2_m3": round(m3_seconds, 2)})
 
+    def compare(self, result_a: ImageResult, result_b: ImageResult, settings: PipelineSettings,
+                force: bool = False) -> Tuple[dict, Optional[np.ndarray]]:
+        """M4 on two analyzed images: view check, report and change map.
+
+        Args:
+            force: Compare even if the view check fails. Recorded in the report.
+
+        Returns:
+            The M4 report and the change map, ``None`` for a blocked pair.
+        """
+        analysis_a, analysis_b = result_a.analysis, result_b.analysis
+        view = check_same_view(result_a.image, result_b.image,
+                               car_region(analysis_a.parts.masks, *result_a.image.shape[:2]),
+                               car_region(analysis_b.parts.masks, *result_b.image.shape[:2]),
+                               settings.min_view_points, settings.min_view_overlap)
+
+        report_b = analysis_b.report
+        comparison = build_report(analysis_a.report, report_b, settings.part_max_distance,
+                                  settings.damage_max_distance, modelos=self.checkpoints,
+                                  vista=view.to_json(), forzada=force and not view.comparable)
+        if comparison["mapa_cambios"] is None:
+            return comparison, None
+        masks_b = {dano["id"]: mask for dano, mask in zip(report_b["danos"], analysis_b.damages.masks)}
+        return comparison, draw_change_map(result_b.image, comparison, masks_b)
+
     def analyze_pair(self, path_a: str, path_b: str, settings: Optional[PipelineSettings] = None,
-                     name_a: Optional[str] = None, name_b: Optional[str] = None) -> PairResult:
+                     name_a: Optional[str] = None, name_b: Optional[str] = None,
+                     force: bool = False) -> PairResult:
         """Both photos of a rental through every module.
 
         Both files go through M1 before any detector runs, so a rejected
@@ -145,10 +178,5 @@ class PairPipeline:
 
         result_a = self.analyze_image(path_a, "A", settings, file_name=name_a)
         result_b = self.analyze_image(path_b, "B", settings, file_name=name_b)
-
-        report_b = result_b.analysis.report
-        comparison = build_report(result_a.analysis.report, report_b, settings.part_max_distance,
-                                  settings.damage_max_distance, modelos=self.checkpoints)
-        masks_b = {dano["id"]: mask for dano, mask in zip(report_b["danos"], result_b.analysis.damages.masks)}
-        change_map = draw_change_map(result_b.image, comparison, masks_b)
+        comparison, change_map = self.compare(result_a, result_b, settings, force)
         return PairResult(a=result_a, b=result_b, comparison=comparison, change_map=change_map)

@@ -3,7 +3,7 @@
 State is shown by shape as well as color, so the map still reads in grayscale:
 a new damage has a strong fill and a thick box, a preexisting one a faint fill
 and a thin box, and a not visible one only a dashed box at its expected place,
-since it has no pixels in B.
+since it has no pixels in B. A forced comparison carries a warning on the map.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ STATE_COLORS = {NUEVO: (40, 40, 230), PREEXISTENTE: (0, 190, 255), NO_VISIBLE: (
 STATE_TEXT = {NUEVO: "NUEVO", PREEXISTENTE: "PREEXISTENTE", NO_VISIBLE: "NO VISIBLE"}
 SUMMARY_KEYS = {NUEVO: "nuevos", PREEXISTENTE: "preexistentes", NO_VISIBLE: "no_visibles"}
 FILL_ALPHA = {NUEVO: 0.55, PREEXISTENTE: 0.25}
+FORCED_TEXT = "PAR NO VERIFICADO: REQUIERE REVISION"
 
 
 def _dashed_box(image_bgr, box, color, line: int) -> None:
@@ -76,4 +77,7 @@ def draw_change_map(image_b: np.ndarray, report: dict,
     for row, (estado, key) in enumerate(SUMMARY_KEYS.items()):
         put_label(canvas, f"{STATE_TEXT[estado]}: {report['resumen'][key]}",
                   (10 * scale, (34 + row * 34) * scale), scale * 0.8, STATE_COLORS[estado])
+    if report.get("comparacion_forzada"):
+        put_label(canvas, FORCED_TEXT, (10 * scale, (34 + len(SUMMARY_KEYS) * 34) * scale), scale * 0.8,
+                  (0, 255, 255))
     return canvas
