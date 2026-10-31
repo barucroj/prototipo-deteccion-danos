@@ -50,7 +50,8 @@ menciona siamesas: solo tenía una descripción genérica ("detectar tallones y 
    - Clasifica cada daño como **nuevo** (en B sin pareja en A), **preexistente** (en A y B) o
      **no visible** (en A y no en B; se marca para revisión, no se descarta).
    - Salida: reporte JSON y mapa de cambios PNG sobre B.
-   - Supone que A y B son de la misma vista; lo garantiza la metodología de captura, no el código.
+   - A y B deben ser la misma vista: lo pide la metodología de captura y lo comprueba
+     `view_check.py`; un par que no pasa no se clasifica salvo que el agente lo fuerce.
 5. **Orquestador** A→B (M1→M2→M3→M4, cargando cada modelo una sola vez; p. ej. `src/pipeline/`)
    e **interfaz web mínima en Streamlit** (carga del par A/B y visualización del reporte).
 
@@ -63,7 +64,7 @@ Espiral de Boehm con 4 vueltas (una por módulo M1-M4), seguidas de integración
 cierre. **Fecha final: 23 nov 2026.** El roadmap de 5 sprints (Sprint 1 Preprocesamiento …
 Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen.
 
-## Estado real (rama `feature/streamlit-app`, 2026-10-30)
+## Estado real (rama `feature/m4-report`, 2026-10-30)
 | Pieza | Estado |
 |---|---|
 | M1 | **Hecho.** Validación de formato/resolución, carga con EXIF, reflejos y CLAHE opcionales, metadatos (`pipeline.py`), sin resize ni ImageNet; transform para entrenar/evaluar con M1 y experimento de AP, con pruebas. Resultado: con los modelos vigentes, M1 **no mejora** el AP (los reflejos lo empeoran; ver la sección de M1). `normalization.py` (512×512 + ImageNet) sigue en el repo pero fuera del camino hacia los detectores. |
@@ -256,6 +257,7 @@ src/
 │                       coco_eval.py · transforms.py · predict.py · visualize.py
 │                       audit.py · watch.py
 ├── m4_comparison/      matching.py · parts.py · damages.py · report.py · render.py
+│                       view_check.py
 ├── pipeline/           orchestrator.py   (orquestador A/B)
 └── app/                streamlit_app.py · view.py   (interfaz web)
 
@@ -271,7 +273,7 @@ tests/
 ├── detection_common/   test_coco_dataset · test_model · test_config · test_coco_eval
 │                       test_transforms · test_audit · test_freeze_bn
 ├── m4_comparison/      test_match_parts.py · test_classify_damages.py · test_report.py
-│                       test_render.py
+│                       test_render.py · test_view_check.py
 ├── pipeline/           test_orchestrator.py
 └── app/                test_view.py
 ```
@@ -444,6 +446,16 @@ Lógica determinista sobre los reportes JSON de M3 (`partes` con `id`/`clase_par
   `reporte_par.json` y `mapa_cambios.png`.
 - `render.py` — `draw_change_map()`: nuevo con relleno fuerte y caja gruesa, preexistente con
   relleno tenue y caja delgada, no visible solo con caja punteada; resumen arriba a la izquierda.
+- `view_check.py` — `check_same_view()`: SIFT + homografía con RANSAC **solo sobre el coche**
+  (unión de máscaras de M2, porque en un patio el fondo es común). Exige `puntos` ≥ 40 y
+  `solape` (IoU del coche de A movido sobre el de B) ≥ 0.5. Si falla, `build_report()` no
+  clasifica nada y no hay mapa (`mapa_cambios: null`); con `forzada` compara, lo registra en
+  `comparacion_forzada` y manda todos los daños a revisión. Comparar nombres de partes **no**
+  sirve: frente de Duster contra frente de Ibiza da 0.80. Medido el 2026-10-30 con 12 fotos
+  propias: 12/12 de misma vista **simulada** aceptadas y 66/66 de vistas o coches distintos
+  rechazadas; los umbrales salieron de esos datos y **están sin calibrar**. Un par real tendrá
+  menos puntos que uno simulado. No demuestra que sea el mismo vehículo: dos unidades idénticas
+  podrían pasar.
 - Sin pares A/B no se pueden calibrar los umbrales. Probado con modelos reales el 2026-10-30:
   la misma foto como A y B da todo preexistente. Las fotos `rigth` a `rigth4` de la Duster
   **no** forman pares válidos (son encuadres distintos).
@@ -456,7 +468,7 @@ anotadas (daños con parte, todas las partes, todos los daños) y una máscara p
 originales.
 
 ## `scripts/analyze_pair.py`
-M1→M4 sobre un par, sin GUI: `analyze_pair.py A.jpg B.jpg -o salida/ [--no-validate]`. Escribe
+M1→M4 sobre un par, sin GUI: `analyze_pair.py A.jpg B.jpg -o salida/ [--no-validate] [--force]`. Escribe
 los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte_par.json` y
 `mapa_cambios.png`.
 
@@ -465,8 +477,10 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   `damage/v2` una sola vez; `analyze_pair(path_a, path_b, PipelineSettings)` valida **ambas**
   fotos antes de cualquier inferencia y corre M1 → M2+M3 sobre A y B y luego M4.
   `PipelineSettings`: pasos de M1 (reflejos apagados, ver M1), validación de resolución,
-  umbrales de partes (0.7), daños (0.5), solapamiento (0.5) y distancias de M4 (0.25 y 0.15).
-  `PairResult` trae `comparison` (reporte de M4) y `change_map` (BGR).
+  umbrales de partes (0.7), daños (0.5), solapamiento (0.5), distancias de M4 (0.25 y 0.15) y
+  verificación de vista (40 puntos, solape 0.5). `PairResult` trae `comparison` (reporte de M4)
+  y `change_map` (BGR, `None` si el par quedó bloqueado). `compare(result_a, result_b, settings,
+  force)` repite solo M4, sin inferencia: lo usa el botón "Comparar de todos modos".
   `PairResult.to_json()` = `{A: {m1, m3, segundos}, B: …, m4: {…}}`. Probado con modelos falsos
   en `tests/pipeline/`.
 - `app/streamlit_app.py` — `./venv_cuda/Scripts/python.exe -m streamlit run
@@ -564,9 +578,9 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
 `tests/m1_preprocessing/` (`test_validation.py`, `test_pipeline.py`,
 `test_specular_removal.py`, `test_normalization.py`, `test_torch_transform.py`,
 `test_ap_experiment.py`), `tests/m4_comparison/` (`test_match_parts.py`,
-`test_classify_damages.py`, `test_report.py`, `test_render.py`),
+`test_classify_damages.py`, `test_report.py`, `test_render.py`, `test_view_check.py`),
 `tests/pipeline/test_orchestrator.py` y `tests/app/test_view.py`.
-Resultado al 2026-10-30: 266 pasan.
+Resultado al 2026-10-30: 283 pasan.
 Los `manual_inference.py` de `tests/m2_parts/`, `tests/m3_damage/detector/` y
 `tests/m3_damage/assignment/` son demos con GUI, no se colectan.
 
