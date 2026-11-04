@@ -64,15 +64,16 @@ Espiral de Boehm con 4 vueltas (una por módulo M1-M4), seguidas de integración
 cierre. **Fecha final: 23 nov 2026.** El roadmap de 5 sprints (Sprint 1 Preprocesamiento …
 Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen.
 
-## Estado real (rama `feature/m4-report`, 2026-10-30)
+## Estado real (rama `feature/m4-report`, 2026-11-03)
 | Pieza | Estado |
 |---|---|
 | M1 | **Hecho.** Validación de formato/resolución, carga con EXIF, reflejos y CLAHE opcionales, metadatos (`pipeline.py`), sin resize ni ImageNet; transform para entrenar/evaluar con M1 y experimento de AP, con pruebas. Resultado: con los modelos vigentes, M1 **no mejora** el AP (los reflejos lo empeoran; ver la sección de M1). `normalization.py` (512×512 + ImageNet) sigue en el repo pero fuera del camino hacia los detectores. |
 | M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN, 29 clases finales) **entrenado** el 2026-09-29 (ver Checkpoints): test box AP 0.6041, mask AP 0.5779; supera a v1 en AP de caja (+0.028, IC 95 % [+0.008, +0.047]) pero no en AP50. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. |
 | M3 | Modelo vigente: `damage/v2` (test: box AP 0.5275, mask AP 0.5075; frente a `damage/v1` las diferencias no son distinguibles del ruido, ver Checkpoints). Asignación a partes **hecha** (`src/m3_damage/assignment/`): parte con mayor solapamiento (mín. 0.5, partes con confianza ≥ 0.7), `pos_relativa`, JSON con `parte_id` por instancia, PNG por daño e imagen anotada, con pruebas. |
-| M4 | **Código completo** (2026-10-30): `src/m4_comparison/` empareja partes, clasifica cada daño como nuevo/preexistente/no visible, arma el reporte JSON de la sección 4.9.2 y dibuja el mapa de cambios PNG; conectado al orquestador. Falta **medirlo**: umbrales (0.25 partes, 0.15 daños) **sin calibrar** y sin pares A/B. |
+| M4 | **Código completo** (2026-10-30): `src/m4_comparison/` empareja partes, clasifica cada daño como nuevo/preexistente/no visible, arma el reporte JSON de la sección 4.9.2 y dibuja el mapa de cambios PNG; conectado al orquestador. **Primera medición** (2026-11-03) con `batch1` (11 pares, 13 daños, todos nuevos; ver "Evaluación con pares A/B"): con umbral de daños 0.5, nuevos P 0.500 / R 0.615 / F1 0.552; el barrido da el mejor F1 en 0.75 (P 0.889 / R 0.615 / F1 0.727), **elegido sobre el mismo lote** (calibración, no prueba). Las distancias (0.25 partes, 0.15 daños) siguen **sin calibrar**: `batch1` no tiene daños preexistentes. |
 | Orquestador / Streamlit | **Flujo completo** (2026-10-30): `src/pipeline/orchestrator.py` corre M1→M2→M3→M4 y `src/app/streamlit_app.py` muestra resumen, mapa y tabla por daño. La interfaz se renderizó con `AppTest` y un resultado real, pero la carga de archivos sigue **sin probarse a mano en navegador**. |
-| Pares A/B con ground truth | No existen (ver "Gap conocido"). |
+| Pares A/B con ground truth | `batch1` (2026-11-03): 11 pares semisintéticos (daño agregado con IA en B), CVAT → COCO 1.0. Faltan pares sin cambios, con daños preexistentes y un lote de prueba separado. |
+| Evaluación | `src/evaluation/` + `scripts/evaluate_pairs.py` + `scripts/sweep_damage_threshold.py` + modo "Evaluar un lote etiquetado" en Streamlit, con pruebas. **Sin commitear** al 2026-11-03 (el usuario lo prueba antes). |
 
 ## Hallazgos técnicos (medidos, no supuestos)
 - **(a) BatchNorm no congelada.** `maskrcnn_resnet50_fpn_v2` usa `nn.BatchNorm2d` (no
@@ -258,6 +259,7 @@ src/
 │                       audit.py · watch.py
 ├── m4_comparison/      matching.py · parts.py · damages.py · report.py · render.py
 │                       view_check.py
+├── evaluation/         ground_truth.py · metrics.py · report.py · run.py · sweep.py · plots.py
 ├── pipeline/           orchestrator.py   (orquestador A/B)
 └── app/                streamlit_app.py · view.py   (interfaz web)
 
@@ -414,8 +416,8 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
 `crack` es 39 % objetos pequeños (<32² px), lo que explica su AP bajo en v1.
 
 ### Pendiente
-- **M4**: calibrar los umbrales y medir P/R/F1 con pares A/B; falta el script de evaluación y
-  el formato de ground truth.
+- **M4**: confirmar el umbral de daños (0.75 en `batch1`) con un lote de prueba y calibrar las
+  distancias con pares que tengan daños preexistentes (ver "Evaluación con pares A/B").
 - **M2**: el umbral de partes es 0.7 en la asignación (`DEFAULT_PART_THRESHOLD`) y 0.5 en los
   demos, sin justificación medida; falta resolver partes que se solapan (hoy el NMS de
   torchvision es por clase y no resuelve solapes entre clases distintas).
@@ -471,6 +473,41 @@ originales.
 M1→M4 sobre un par, sin GUI: `analyze_pair.py A.jpg B.jpg -o salida/ [--no-validate] [--force]`. Escribe
 los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte_par.json` y
 `mapa_cambios.png`.
+
+## Evaluación con pares A/B (`src/evaluation/`, 2026-11-03)
+- **Lote**: `<lote>/images/pNN_<coche>-<vista>_A|B.jpg` y `<lote>/annotations/instances_images.json`
+  (CVAT, export **COCO 1.0**, polígonos). Atributo opcional `dano_id` para ligar el mismo daño en
+  A y B: solo en B → nuevo, en ambas → preexistente, solo en A → no visible; sin `dano_id`, cada
+  anotación es un daño propio. `ground_truth.load_batch()` valida nombres, pares incompletos y
+  `dano_id` repetidos.
+- **`batch1`** (`data/raw/own-data/batch1/`): 11 pares (Duster p01-p05, Ibiza p06-p11), 13 daños,
+  **todos nuevos**, agregados con IA en B y con fondo quitado. Respaldo del JSON original en
+  `annotations/instances_images.orig.json`. p03 lo bloquea `view_check` (12 puntos, solape 0.09:
+  B tiene otro recorte). p06: el polígono de `lamp_broken` cubre también la pintura agrietada y la
+  detección solo el faro (IoU 0.28) → **pendiente reetiquetar** (faro ajustado + `crack` aparte).
+- **Métricas** (`metrics.py`, solo daños nuevos): un daño real cuenta como detectado si una
+  detección lo cubre con IoU ≥ 0.3 (principal; también 0.5), emparejamiento húngaro con umbral; el
+  tipo **no** tiene que coincidir. P/R/F1 de nuevo: FP = detecciones falsas marcadas nuevo + daños
+  reales no nuevos marcados nuevo. Por par: "¿B tiene un daño nuevo?" (accuracy; `batch1` no tiene
+  negativos) y pares exactos. Un par bloqueado por `view_check` cuenta como `sin_clasificar` salvo
+  `--force`.
+- **`scripts/evaluate_pairs.py <lote> -o <salida> [--force] [--iou 0.3 0.5] [--damage-threshold …]`**
+  → `evaluacion.json`/`.md` y `pares/<pNN>/` (reportes de M3, anotadas, `reporte_par.json`, mapa).
+  `run.load_evaluation()` recalcula los resúmenes al abrir un archivo viejo.
+- **`scripts/sweep_damage_threshold.py <lote> -o <salida> [--thresholds …]`**: los modelos corren
+  una vez por par con el umbral más bajo; cada umbral filtra esas detecciones (`restrict_damages`)
+  y repite M4 reutilizando el veredicto de vista. Mejor = máx. F1 de nuevos en el IoU principal
+  (empate: menos FP, luego umbral mayor). Escribe `barrido_umbral.csv/.json/.md` y
+  `figuras/` (`prf_vs_umbral`, `errores_vs_umbral`, `precision_recall`, `f1_por_iou`, PNG 200 dpi).
+- **Resultados en `batch1`** (`data/processed/eval/`, IoU 0.3): umbral 0.5 → P 0.500, R 0.615,
+  F1 0.552, 8 nuevos falsos, 3/11 pares exactos (con `--force`: 0.529/0.692/0.600). Barrido
+  (`batch1_umbral/`): **0.75 → P 0.889, R 0.615, F1 0.727, 1 falso, 6/11 exactos**; de 0.5 a 0.75
+  se quitan 7 falsos sin perder aciertos; 0.80 ya pierde 2 (0.75 está al borde de la meseta
+  0.60-0.75). Con IoU 0.5 el mejor sería 0.30. **Umbral de calibración**: 13 daños del mismo lote;
+  `DEFAULT_DAMAGE_THRESHOLD` sigue en 0.5 hasta confirmarlo con un lote de prueba.
+- **Streamlit**: barra lateral "Modo" → "Evaluar un lote etiquetado" (`app/evaluation_page.py`,
+  lógica sin Streamlit en `app/evaluation_view.py`): evalúa o abre una evaluación guardada,
+  métricas, tabla por par y las imágenes con el GT en verde.
 
 ## `src/pipeline/` y `src/app/` — orquestador e interfaz
 - `pipeline/orchestrator.py` — `PairPipeline.from_checkpoints()` carga `car_parts/v2` y
@@ -579,8 +616,9 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
 `test_specular_removal.py`, `test_normalization.py`, `test_torch_transform.py`,
 `test_ap_experiment.py`), `tests/m4_comparison/` (`test_match_parts.py`,
 `test_classify_damages.py`, `test_report.py`, `test_render.py`, `test_view_check.py`),
-`tests/pipeline/test_orchestrator.py` y `tests/app/test_view.py`.
-Resultado al 2026-10-30: 283 pasan.
+`tests/pipeline/test_orchestrator.py`, `tests/app/` (`test_view.py`, `test_evaluation_view.py`) y
+`tests/evaluation/` (`test_ground_truth.py`, `test_metrics.py`, `test_evaluation_report.py`,
+`test_run.py`, `test_sweep.py`). Resultado al 2026-11-03: 313 pasan.
 Los `manual_inference.py` de `tests/m2_parts/`, `tests/m3_damage/detector/` y
 `tests/m3_damage/assignment/` son demos con GUI, no se colectan.
 
@@ -596,7 +634,8 @@ Los `manual_inference.py` de `tests/m2_parts/`, `tests/m3_damage/detector/` y
 4. ~~M1 compatible con los detectores + experimento de AP con y sin preprocesamiento~~ —
    hecho; M1 no mejora el AP (ver la sección de M1).
 5. Orquestador + Streamlit: flujo completo conectado; falta probar en navegador.
-6. Evaluación end-to-end con pares A/B propios (P, R, F1, Accuracy).
+6. Evaluación end-to-end con pares A/B propios (P, R, F1, Accuracy): herramientas hechas y
+   primera medición con `batch1` (2026-11-03); faltan lotes con preexistentes, sin cambios y de prueba.
 7. Limpieza de `README`, `setup.py` y `requirements.txt`: hecha.
 
 ## Reglas de trabajo
