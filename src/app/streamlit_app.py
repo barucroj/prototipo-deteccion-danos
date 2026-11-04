@@ -3,7 +3,8 @@
     ./venv_cuda/Scripts/python.exe -m streamlit run src/app/streamlit_app.py
 
 Runs M1 -> M2 -> M3 -> M4 on the pair through :class:`src.pipeline.orchestrator.PairPipeline`.
-The models are loaded once per server process (``st.cache_resource``).
+The models are loaded once per server process (``st.cache_resource``). A
+second mode evaluates a labeled batch (:mod:`src.app.evaluation_page`).
 """
 
 import json
@@ -18,6 +19,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from src.app.evaluation_page import show_batch_evaluation  # noqa: E402
 from src.app.view import comparison_rows, damage_rows, part_rows, to_display  # noqa: E402
 from src.detection_common.visualize import draw_detections  # noqa: E402
 from src.m1_preprocessing.pipeline import PreprocessConfig  # noqa: E402
@@ -162,8 +164,14 @@ def show_comparison(pair) -> None:
 
 def main() -> None:
     st.title("Detección de daños vehiculares")
-    st.caption("Compara la foto de entrega (A) con la de devolución (B) de la misma vista del vehículo.")
+    mode = st.sidebar.radio("Modo", ["Analizar un par", "Evaluar un lote etiquetado"])
     settings = sidebar()
+    if mode != "Analizar un par":
+        show_batch_evaluation(settings, lambda: get_pipeline(DEFAULT_PARTS_CHECKPOINT, DEFAULT_DAMAGE_CHECKPOINT),
+                              PROJECT_ROOT)
+        return
+
+    st.caption("Compara la foto de entrega (A) con la de devolución (B) de la misma vista del vehículo.")
 
     col_a, col_b = st.columns(2)
     with col_a:
