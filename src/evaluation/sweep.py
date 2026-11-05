@@ -3,8 +3,8 @@
 The detectors run once per pair, at the lowest threshold. A higher threshold
 keeps a subset of those detections, and a damage's part assignment does not
 depend on the other damages, so each threshold only filters the detections and
-repeats M4. The view check depends on the parts alone, so its verdict is
-reused for every threshold.
+repeats M4; duplicates are merged again after filtering. The view check
+depends on the parts alone, so its verdict is reused for every threshold.
 
 The best threshold maximizes the F1 of new damages at the main IoU; ties go to
 fewer false new damages, then to the higher threshold.
@@ -23,7 +23,7 @@ import numpy as np
 from src.evaluation.ground_truth import PairGroundTruth
 from src.evaluation.metrics import evaluate_pair, failed_pair, summarize
 from src.m1_preprocessing.validation import ImageValidationError
-from src.m3_damage.assignment.analyze import Detections, ImageAnalysis, build_report
+from src.m3_damage.assignment.analyze import Detections, ImageAnalysis, finish_analysis
 from src.m4_comparison.report import build_report as build_comparison
 
 CSV_FILE = "barrido_umbral.csv"
@@ -37,16 +37,23 @@ CSV_COLUMNS = ["umbral_danos", "min_iou", "precision", "recall", "f1", "nuevos_r
 
 
 def restrict_damages(analysis: ImageAnalysis, threshold: float) -> ImageAnalysis:
-    """The M3 result as if the damage detector had run at ``threshold`` (>= the original one)."""
-    keep = np.flatnonzero(analysis.damages.scores >= threshold)
-    damages = Detections(names=[analysis.damages.names[i] for i in keep], scores=analysis.damages.scores[keep],
-                         boxes=analysis.damages.boxes[keep], masks=analysis.damages.masks[keep])
-    assignments = [analysis.assignments[i] for i in keep]
+    """The M3 result as if the damage detector had run at ``threshold`` (>= the original one).
+
+    Filters the detections **before** merging and merges again with the same
+    settings: a low-confidence duplicate that the threshold drops must not
+    keep enlarging the merged damage.
+    """
+    raw = analysis.raw_damages if analysis.raw_damages is not None else analysis.damages
+    raw_assignments = analysis.raw_assignments if analysis.raw_assignments is not None else analysis.assignments
+    keep = np.flatnonzero(raw.scores >= threshold)
+    damages = Detections(names=[raw.names[i] for i in keep], scores=raw.scores[keep],
+                         boxes=raw.boxes[keep], masks=raw.masks[keep])
+    assignments = [raw_assignments[i] for i in keep]
     old = analysis.report
-    report = build_report(analysis.parts, damages, assignments, old["imagen"], old["width"], old["height"],
-                          file_name=old["archivo"], part_threshold=old["umbral_partes"],
-                          damage_threshold=threshold, min_overlap=old["umbral_solapamiento"])
-    return ImageAnalysis(report=report, parts=analysis.parts, damages=damages, assignments=assignments)
+    return finish_analysis(analysis.parts, damages, assignments, old["imagen"], old["width"], old["height"],
+                           file_name=old["archivo"], part_threshold=old["umbral_partes"],
+                           damage_threshold=threshold, min_overlap=old["umbral_solapamiento"],
+                           merge=analysis.merge)
 
 
 def sweep_pairs(pipeline, pairs: List[PairGroundTruth], settings, thresholds: Sequence[float],

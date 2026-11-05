@@ -17,6 +17,7 @@ from src.m1_preprocessing.pipeline import PreprocessConfig, preprocess_file
 from src.m1_preprocessing.validation import validate_image
 from src.m3_damage.assignment.analyze import (DEFAULT_DAMAGE_THRESHOLD, DEFAULT_MIN_OVERLAP,
                                               DEFAULT_PART_THRESHOLD, ImageAnalysis, analyze_image)
+from src.m3_damage.assignment.merge import MergeSettings
 from src.m4_comparison.damages import DEFAULT_DAMAGE_MAX_DISTANCE
 from src.m4_comparison.parts import DEFAULT_PART_MAX_DISTANCE
 from src.m4_comparison.render import draw_change_map
@@ -37,6 +38,7 @@ class PipelineSettings:
         preprocess: Optical steps of M1. The current checkpoints were trained
             on raw images, so highlight removal is off by default here.
         validate: Enforce the protocol's minimum resolution (1920x1080).
+        merge: Merging of same-type damages in the same region (M3); on by default.
     """
 
     preprocess: PreprocessConfig = field(default_factory=lambda: PreprocessConfig(specular=False))
@@ -44,6 +46,7 @@ class PipelineSettings:
     part_threshold: float = DEFAULT_PART_THRESHOLD
     damage_threshold: float = DEFAULT_DAMAGE_THRESHOLD
     min_overlap: float = DEFAULT_MIN_OVERLAP
+    merge: MergeSettings = field(default_factory=MergeSettings)
     part_max_distance: float = DEFAULT_PART_MAX_DISTANCE
     damage_max_distance: float = DEFAULT_DAMAGE_MAX_DISTANCE
     min_view_points: int = DEFAULT_MIN_VIEW_POINTS
@@ -133,7 +136,7 @@ class PairPipeline:
                                  image_label=label, file_name=pre.metadata["archivo"],
                                  part_threshold=settings.part_threshold,
                                  damage_threshold=settings.damage_threshold,
-                                 min_overlap=settings.min_overlap)
+                                 min_overlap=settings.min_overlap, merge=settings.merge)
         m3_seconds = time.perf_counter() - start
         return ImageResult(image=pre.image, metadata=pre.metadata, analysis=analysis,
                            seconds={"m1": round(m1_seconds, 2), "m2_m3": round(m3_seconds, 2)})

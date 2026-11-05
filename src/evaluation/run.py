@@ -22,7 +22,7 @@ def evaluation_config(batch_dir: str, annotations: Optional[str], settings, chec
     return {"lote": os.path.normpath(batch_dir), "anotaciones": annotations, "forzar": force,
             "validar": settings.validate, "modelos": checkpoints,
             "umbral_partes": settings.part_threshold, "umbral_danos": settings.damage_threshold,
-            "solapamiento_minimo": settings.min_overlap,
+            "solapamiento_minimo": settings.min_overlap, "fusion": settings.merge.to_json(),
             "distancia_partes": settings.part_max_distance, "distancia_danos": settings.damage_max_distance,
             "vista_puntos": settings.min_view_points, "vista_solape": settings.min_view_overlap}
 

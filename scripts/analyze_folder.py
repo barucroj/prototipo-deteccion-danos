@@ -34,6 +34,7 @@ from src.detection_common.visualize import draw_detections  # noqa: E402
 from src.m1_preprocessing.pipeline import load_image  # noqa: E402
 from src.m3_damage.assignment.analyze import (  # noqa: E402
     DEFAULT_DAMAGE_THRESHOLD, DEFAULT_MIN_OVERLAP, DEFAULT_PART_THRESHOLD, analyze_image)
+from src.m3_damage.assignment.merge import add_merge_arguments, merge_settings_from_args  # noqa: E402
 from src.m3_damage.assignment.output import save_analysis  # noqa: E402
 
 DEFAULT_INPUT = os.path.join(PROJECT_ROOT, "data", "raw", "own-data", "TESTS",
@@ -60,6 +61,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--part-threshold", type=float, default=DEFAULT_PART_THRESHOLD)
     parser.add_argument("--damage-threshold", type=float, default=DEFAULT_DAMAGE_THRESHOLD)
     parser.add_argument("--min-overlap", type=float, default=DEFAULT_MIN_OVERLAP)
+    add_merge_arguments(parser)
     return parser
 
 
@@ -86,6 +88,7 @@ def main(argv=None) -> int:
         "part_threshold": args.part_threshold,
         "damage_threshold": args.damage_threshold,
         "min_overlap": args.min_overlap,
+        "fusion": merge_settings_from_args(args).to_json(),
         "imagenes": [],
     }
     for name in images:
@@ -95,7 +98,8 @@ def main(argv=None) -> int:
         start = time.perf_counter()
         analysis = analyze_image(image_bgr, parts_model, part_categories, damage_model, damage_categories,
                                  device, file_name=name, part_threshold=args.part_threshold,
-                                 damage_threshold=args.damage_threshold, min_overlap=args.min_overlap)
+                                 damage_threshold=args.damage_threshold, min_overlap=args.min_overlap,
+                                 merge=merge_settings_from_args(args))
         elapsed = time.perf_counter() - start
 
         save_analysis(analysis, image_bgr, output_dir, stem)
