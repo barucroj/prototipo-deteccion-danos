@@ -5,17 +5,20 @@ that makes the result traceable:
 
 1. validate format and resolution (:mod:`src.m1_preprocessing.validation`);
 2. load it upright, applying the EXIF orientation;
-3. reduce specular highlights (on by default);
-4. enhance contrast with CLAHE (off by default).
+3. only inside a pair: reduce the larger photo of A/B to the long side of the
+   other (:mod:`src.m1_preprocessing.pair_size`), never enlarging;
+4. reduce specular highlights (on by default);
+5. enhance contrast with CLAHE (off by default).
 
-The image keeps its size and stays 8-bit BGR. There is **no resize and no
-ImageNet normalization** here: torchvision's R-CNNs take RGB in [0, 1] at the
-original size and do both inside ``GeneralizedRCNNTransform``.
+The image stays 8-bit BGR and keeps its size except for step 3. There is **no
+resize to a fixed size and no ImageNet normalization** here: torchvision's
+R-CNNs take RGB in [0, 1] and do both inside ``GeneralizedRCNNTransform``.
 ``normalization.preprocess_pipeline`` (512x512 + ImageNet) is not part of this
 path.
 
-Steps 3 and 4 are photometric, so boxes and masks computed on the output are
-valid on the input and vice versa.
+Steps 4 and 5 are photometric, so boxes and masks computed on the output are
+valid on the input and vice versa. After step 3 they are in pixels of the
+reduced image; its scale is in the metadata.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ import numpy as np
 from PIL import Image, ImageOps
 
 from src.m1_preprocessing.normalization import apply_clahe_rgb
+from src.m1_preprocessing.pair_size import limit_long_side
 from src.m1_preprocessing.specular_removal import ShenParams, remove_specular_highlights
 from src.m1_preprocessing.validation import (MIN_LONG_SIDE, MIN_SHORT_SIDE, ImageInfo,
                                              inspect_image, validate_image)
@@ -115,7 +119,8 @@ def preprocess_image(image_bgr: np.ndarray,
 
 def preprocess_file(path: str, config: Optional[PreprocessConfig] = None, validate: bool = True,
                     min_long_side: int = MIN_LONG_SIDE,
-                    min_short_side: int = MIN_SHORT_SIDE) -> PreprocessResult:
+                    min_short_side: int = MIN_SHORT_SIDE,
+                    max_long_side: Optional[int] = None) -> PreprocessResult:
     """M1 end to end for one photo file.
 
     Args:
@@ -123,6 +128,9 @@ def preprocess_file(path: str, config: Optional[PreprocessConfig] = None, valida
         config: Optical steps to run; defaults to :class:`PreprocessConfig`.
         validate: Enforce the minimum resolution. The format is always
             checked. Turn off only for dataset images, which are smaller.
+        max_long_side: Reduce the upright image to this long side before the
+            optical steps (step ``igualar_tamano_par``); ``None`` keeps it.
+            The orchestrator sets it to equalize A and B.
 
     Returns:
         A :class:`PreprocessResult` whose ``metadata`` is::
@@ -135,7 +143,7 @@ def preprocess_file(path: str, config: Optional[PreprocessConfig] = None, valida
 
         ``width_original`` / ``height_original`` are the stored size;
         ``width`` / ``height`` the size of the returned image, which differ
-        only when the EXIF orientation is a 90-degree rotation.
+        only after a 90-degree EXIF rotation or a ``max_long_side`` reduction.
 
     Raises:
         ImageValidationError: when the file fails a check.
@@ -148,6 +156,9 @@ def preprocess_file(path: str, config: Optional[PreprocessConfig] = None, valida
     if info.exif_orientation != 1:
         steps.append({"nombre": "orientacion_exif",
                       "parametros": {"orientacion": info.exif_orientation}})
+    image, resize_step = limit_long_side(image, max_long_side)
+    if resize_step:
+        steps.append(resize_step)
     image, optical_steps = preprocess_image(image, config)
     steps.extend(optical_steps)
 

@@ -151,3 +151,23 @@ def test_preexisting_marked_new_is_a_false_new_and_clean_pairs_are_negatives():
     pairs = summary["por_par"]
     assert (pairs["positivos"], pairs["negativos"]) == (0, 3)
     assert (pairs["fp"], pairs["tn"], pairs["accuracy"], pairs["exactos"]) == (2, 1, 0.3333, 1)
+
+
+def test_labeled_boxes_follow_a_reduced_image():
+    # B was labeled at 2000x1000 and M1 reduced it to 1000x500 to match A.
+    gt = PairGroundTruth("p01", "x", "a.jpg", "b.jpg", [], [labeled(1, "dent", [200, 200, 400, 400])],
+                         size_a=(1000, 500), size_b=(2000, 1000))
+    report_b = {"width": 1000, "height": 500, "danos": [detection("B-01", "dent", [100, 100, 200, 200])]}
+    result = evaluate_pair(gt, {"width": 1000, "height": 500, "danos": []}, report_b,
+                           comparison([entry("nuevo", "dent", id_b="B-01")]))
+    dano = result["danos"][0]
+    assert dano["estado_predicho"] == "nuevo" and dano["iou_b"] == 1.0
+    assert dano["bbox_real_b"] == [100.0, 100.0, 200.0, 200.0]
+    assert result["falsos"] == []
+
+
+def test_scale_boxes_without_sizes_is_identity():
+    from src.evaluation.metrics import scale_boxes
+    assert scale_boxes([[1, 2, 3, 4]], None, {"width": 10, "height": 10}) == [[1.0, 2.0, 3.0, 4.0]]
+    assert scale_boxes([[1, 2, 3, 4]], (10, 10), {"danos": []}) == [[1.0, 2.0, 3.0, 4.0]]
+    assert scale_boxes([[1, 2, 3, 4]], (10, 10), {"width": 5, "height": 5}) == [[0.5, 1.0, 1.5, 2.0]]

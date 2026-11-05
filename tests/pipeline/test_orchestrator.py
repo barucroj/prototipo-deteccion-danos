@@ -153,3 +153,22 @@ def test_low_resolution_is_rejected_before_any_inference(tmp_path):
         pipeline.analyze_pair(good, small, PipelineSettings(preprocess=PreprocessConfig(specular=False)))
     assert error.value.code == "resolucion"
     assert pipeline.parts_model.calls == 0 and pipeline.damage_model.calls == 0
+
+
+def test_larger_photo_is_reduced_to_the_other_long_side(tmp_path):
+    a = write_image(tmp_path / "a.png", 320, 240)
+    b = write_image(tmp_path / "b.png", 640, 480)
+    pair = make_pipeline().analyze_pair(a, b, SMALL)
+    assert pair.a.image.shape[:2] == (240, 320) and pair.b.image.shape[:2] == (240, 320)
+    assert pair.a.metadata["transformaciones"] == []
+    step = pair.b.metadata["transformaciones"][0]
+    assert step["nombre"] == "igualar_tamano_par" and step["parametros"]["a"] == [320, 240]
+    assert (pair.b.analysis.report["width"], pair.b.analysis.report["height"]) == (320, 240)
+
+
+def test_equalizing_can_be_turned_off(tmp_path):
+    settings = PipelineSettings(preprocess=PreprocessConfig(specular=False), validate=False, equalize_size=False)
+    pair = make_pipeline().analyze_pair(write_image(tmp_path / "a.png", 320, 240),
+                                        write_image(tmp_path / "b.png", 640, 480), settings)
+    assert pair.b.image.shape[:2] == (480, 640)
+    assert pair.b.metadata["transformaciones"] == []

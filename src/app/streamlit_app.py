@@ -54,6 +54,9 @@ def sidebar() -> PipelineSettings:
     st.sidebar.header("Configuración")
     st.sidebar.subheader("M1. Preprocesamiento")
     validate = st.sidebar.checkbox("Exigir resolución mínima 1920×1080", value=True)
+    equalize_size = st.sidebar.checkbox(
+        "Igualar el tamaño de A y B", value=True,
+        help="Reduce la foto más grande al lado largo de la otra; la más chica nunca se agranda.")
     specular = st.sidebar.checkbox(
         "Reducir reflejos especulares", value=False,
         help="Los modelos vigentes (car_parts/v2, damage/v2) se entrenaron con imágenes crudas.")
@@ -86,7 +89,7 @@ def sidebar() -> PipelineSettings:
         st.caption(f"Daños: `{os.path.relpath(DEFAULT_DAMAGE_CHECKPOINT, PROJECT_ROOT)}`")
 
     return PipelineSettings(preprocess=PreprocessConfig(specular=specular, clahe=clahe), validate=validate,
-                            part_threshold=part_threshold, damage_threshold=damage_threshold,
+                            equalize_size=equalize_size, part_threshold=part_threshold, damage_threshold=damage_threshold,
                             min_overlap=min_overlap, part_max_distance=part_max_distance,
                             merge=MergeSettings(merge_enabled, merge_iou, merge_containment),
                             damage_max_distance=damage_max_distance)
