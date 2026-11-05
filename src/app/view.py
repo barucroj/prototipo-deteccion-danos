@@ -40,6 +40,7 @@ def damage_rows(report: dict) -> List[dict]:
             "Parte": f"{dano['parte']} ({dano['parte_id']})" if dano["parte"] else UNASSIGNED,
             "Solapamiento": round(dano["solapamiento"], 2),
             "Área (px)": dano["area_px"],
+            "Fusiona": ", ".join(dano.get("fusionados") or []),
         })
     return rows
 

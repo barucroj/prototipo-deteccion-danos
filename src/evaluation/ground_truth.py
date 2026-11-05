@@ -65,6 +65,10 @@ class PairGroundTruth:
     path_b: str
     danos_a: List[LabeledDamage] = field(default_factory=list)
     danos_b: List[LabeledDamage] = field(default_factory=list)
+    # (width, height) of each image as labeled, from the COCO file; the boxes
+    # are in these pixels. ``None`` when unknown (no rescaling is done).
+    size_a: Optional[Tuple[int, int]] = None
+    size_b: Optional[Tuple[int, int]] = None
 
     def physical_damages(self) -> List[PhysicalDamage]:
         """Group the annotations of A and B into real damages with their expected state."""
@@ -139,7 +143,8 @@ def load_batch(batch_dir: str, annotations_path: Optional[str] = None) -> List[P
         path = os.path.join(images_dir, image["file_name"])
         if not os.path.isfile(path):
             raise GroundTruthError(f"no existe {path}")
-        sides[(par, vista)][side] = {"path": path, "danos": by_image.get(image["id"], [])}
+        size = (int(image["width"]), int(image["height"])) if "width" in image and "height" in image else None
+        sides[(par, vista)][side] = {"path": path, "danos": by_image.get(image["id"], []), "size": size}
 
     pars = [p for p, _ in sides]
     repeated = sorted({p for p in pars if pars.count(p) > 1})
@@ -152,5 +157,6 @@ def load_batch(batch_dir: str, annotations_path: Optional[str] = None) -> List[P
         if missing:
             raise GroundTruthError(f"a {par} le falta la imagen {''.join(sorted(missing))}")
         pairs.append(PairGroundTruth(par, vista, images["A"]["path"], images["B"]["path"],
-                                     list(images["A"]["danos"]), list(images["B"]["danos"])))
+                                     list(images["A"]["danos"]), list(images["B"]["danos"]),
+                                     images["A"]["size"], images["B"]["size"]))
     return pairs

@@ -36,6 +36,7 @@ def test_pairs_are_built_from_the_names_and_boxes_become_corners(tmp_path):
     assert pairs[0].path_a.endswith("p01_duster-front_A.jpg")
     assert pairs[0].danos_a == [] and pairs[0].danos_b[0].bbox == (10, 20, 40, 60)
     assert pairs[0].danos_b[0].tipo == "dent" and pairs[0].danos_b[0].dano_id is None
+    assert pairs[0].size_a == (100, 100) and pairs[0].size_b == (100, 100)
 
 
 def test_states_follow_where_each_damage_id_appears(tmp_path):
