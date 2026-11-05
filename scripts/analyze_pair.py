@@ -22,6 +22,7 @@ from src.m3_damage.assignment.output import save_analysis  # noqa: E402
 from src.m4_comparison.damages import DEFAULT_DAMAGE_MAX_DISTANCE  # noqa: E402
 from src.m4_comparison.parts import DEFAULT_PART_MAX_DISTANCE  # noqa: E402
 from src.m4_comparison.report import save_report  # noqa: E402
+from src.m3_damage.assignment.merge import add_merge_arguments, merge_settings_from_args  # noqa: E402
 from src.pipeline.orchestrator import (DEFAULT_DAMAGE_CHECKPOINT, DEFAULT_PARTS_CHECKPOINT,  # noqa: E402
                                        PairPipeline, PipelineSettings)
 
@@ -37,12 +38,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--damage-checkpoint", default=DEFAULT_DAMAGE_CHECKPOINT)
     parser.add_argument("--part-max-distance", type=float, default=DEFAULT_PART_MAX_DISTANCE)
     parser.add_argument("--damage-max-distance", type=float, default=DEFAULT_DAMAGE_MAX_DISTANCE)
+    add_merge_arguments(parser)
     return parser
 
 
 def main(argv=None) -> int:
     args = build_arg_parser().parse_args(argv)
-    settings = PipelineSettings(validate=not args.no_validate, part_max_distance=args.part_max_distance,
+    settings = PipelineSettings(validate=not args.no_validate, merge=merge_settings_from_args(args),
+                                part_max_distance=args.part_max_distance,
                                 damage_max_distance=args.damage_max_distance)
     pipeline = PairPipeline.from_checkpoints(args.parts_checkpoint, args.damage_checkpoint)
     try:

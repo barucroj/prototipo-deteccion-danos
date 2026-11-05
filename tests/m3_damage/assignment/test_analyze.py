@@ -43,7 +43,7 @@ def test_report_is_json_serializable_and_has_the_spec_fields():
     assert report["imagen"] == "B"
     assert (report["width"], report["height"]) == (W, H)
     assert set(report["danos"][0]) == {"id", "tipo", "confianza", "bbox", "area_px", "parte",
-                                       "parte_id", "solapamiento", "pos_relativa"}
+                                       "parte_id", "solapamiento", "pos_relativa", "fusionados"}
 
 
 def test_damage_ids_carry_the_image_label():

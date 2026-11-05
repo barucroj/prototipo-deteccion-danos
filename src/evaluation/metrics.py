@@ -89,16 +89,22 @@ def evaluate_pair(truth: PairGroundTruth, report_a: dict, report_b: dict, compar
         report_a / report_b: M3 reports (``danos`` with ``id``, ``tipo``, ``bbox``).
         comparison: M4 report; ``mapa_cambios`` is ``None`` for a blocked pair.
 
+    The labeled boxes are brought to the pixels the detector saw (M1 may have
+    reduced one photo to equalize the pair, see :func:`scale_boxes`), so
+    ``bbox_real_a`` / ``bbox_real_b`` are in pixels of the analyzed images.
+
     Returns:
         ``{"par", "vista", "comparable", "danos": [...], "falsos": [...]}``,
         one entry per real damage and per false detection.
     """
     blocked = comparison["mapa_cambios"] is None
     detected_a, detected_b = report_a["danos"], report_b["danos"]
+    real_a = scale_boxes([x.bbox for x in truth.danos_a], truth.size_a, report_a)
+    real_b = scale_boxes([x.bbox for x in truth.danos_b], truth.size_b, report_b)
     match_a = {r: (detected_a[d]["id"], iou) for r, d, iou in
-               match_boxes([x.bbox for x in truth.danos_a], [x["bbox"] for x in detected_a], min_iou)}
+               match_boxes(real_a, [x["bbox"] for x in detected_a], min_iou)}
     match_b = {r: (detected_b[d]["id"], iou) for r, d, iou in
-               match_boxes([x.bbox for x in truth.danos_b], [x["bbox"] for x in detected_b], min_iou)}
+               match_boxes(real_b, [x["bbox"] for x in detected_b], min_iou)}
     by_id_a = {e["id_a"]: e for e in comparison["danos"] if e["id_a"]}
     by_id_b = {e["id_b"]: e for e in comparison["danos"] if e["id_b"]}
     tipo_a = {d["id"]: d["tipo"] for d in detected_a}
@@ -126,7 +132,7 @@ def evaluate_pair(truth: PairGroundTruth, report_a: dict, report_b: dict, compar
                 estado = EMPAREJADO_MAL
         danos.append({"id": real.id, "tipo": real.tipo, "estado_real": real.estado, "estado_predicho": estado,
                       "tipo_predicho": tipo, "id_a": id_a, "id_b": id_b,
-                      "iou_a": _round(iou_a), "iou_b": _round(iou_b), **_real_boxes(truth, real)})
+                      "iou_a": _round(iou_a), "iou_b": _round(iou_b), **_real_boxes(real, real_a, real_b)})
 
     matched_a = {v[0] for v in match_a.values()}
     matched_b = {v[0] for v in match_b.values()}
@@ -145,19 +151,41 @@ def evaluate_pair(truth: PairGroundTruth, report_a: dict, report_b: dict, compar
 
 
 def failed_pair(truth: PairGroundTruth, error: str) -> dict:
-    """A pair the pipeline could not run (M1 rejected a photo): its damages stay unclassified."""
+    """A pair the pipeline could not run (M1 rejected a photo): its damages stay unclassified.
+
+    Nothing was analyzed, so the labeled boxes stay in pixels of the labeled images.
+    """
+    real_a = [list(map(float, x.bbox)) for x in truth.danos_a]
+    real_b = [list(map(float, x.bbox)) for x in truth.danos_b]
     danos = [{"id": real.id, "tipo": real.tipo, "estado_real": real.estado, "estado_predicho": SIN_CLASIFICAR,
               "tipo_predicho": None, "id_a": None, "id_b": None, "iou_a": None, "iou_b": None,
-              **_real_boxes(truth, real)}
+              **_real_boxes(real, real_a, real_b)}
              for real in truth.physical_damages()]
     return {"par": truth.par, "vista": truth.vista, "comparable": False, "error": error,
             "danos": danos, "falsos": []}
 
 
-def _real_boxes(truth: PairGroundTruth, real) -> dict:
+def scale_boxes(boxes: Sequence[Sequence[float]], labeled_size: Optional[Tuple[int, int]],
+                report: dict) -> List[List[float]]:
+    """Labeled ``[x1, y1, x2, y2]`` boxes rescaled from the labeled image to the analyzed one.
+
+    ``labeled_size`` is the (width, height) of the labeled image and the
+    report's ``width`` / ``height`` the size M3 worked on. When either is
+    missing, or both are equal, the boxes are returned unchanged.
+    """
+    boxes = [list(map(float, box)) for box in boxes]
+    if labeled_size is None or "width" not in report or "height" not in report:
+        return boxes
+    sx, sy = report["width"] / labeled_size[0], report["height"] / labeled_size[1]
+    if sx == 1 and sy == 1:
+        return boxes
+    return [[x1 * sx, y1 * sy, x2 * sx, y2 * sy] for x1, y1, x2, y2 in boxes]
+
+
+def _real_boxes(real, real_a: List[List[float]], real_b: List[List[float]]) -> dict:
     """Labeled boxes of a real damage in A and B, ``None`` where it is not visible."""
-    return {"bbox_real_a": None if real.index_a is None else list(truth.danos_a[real.index_a].bbox),
-            "bbox_real_b": None if real.index_b is None else list(truth.danos_b[real.index_b].bbox)}
+    return {"bbox_real_a": None if real.index_a is None else [round(v, 1) for v in real_a[real.index_a]],
+            "bbox_real_b": None if real.index_b is None else [round(v, 1) for v in real_b[real.index_b]]}
 
 
 def _round(value: Optional[float]) -> Optional[float]:

@@ -14,9 +14,11 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 
 from src.m1_preprocessing.pipeline import PreprocessConfig, preprocess_file
-from src.m1_preprocessing.validation import validate_image
+from src.m1_preprocessing.pair_size import pair_max_long_sides, upright_size
+from src.m1_preprocessing.validation import inspect_image, validate_image
 from src.m3_damage.assignment.analyze import (DEFAULT_DAMAGE_THRESHOLD, DEFAULT_MIN_OVERLAP,
                                               DEFAULT_PART_THRESHOLD, ImageAnalysis, analyze_image)
+from src.m3_damage.assignment.merge import MergeSettings
 from src.m4_comparison.damages import DEFAULT_DAMAGE_MAX_DISTANCE
 from src.m4_comparison.parts import DEFAULT_PART_MAX_DISTANCE
 from src.m4_comparison.render import draw_change_map
@@ -37,13 +39,18 @@ class PipelineSettings:
         preprocess: Optical steps of M1. The current checkpoints were trained
             on raw images, so highlight removal is off by default here.
         validate: Enforce the protocol's minimum resolution (1920x1080).
+        equalize_size: Reduce the larger photo of the pair to the long side of
+            the other (M1, :mod:`src.m1_preprocessing.pair_size`); on by default.
+        merge: Merging of same-type damages in the same region (M3); on by default.
     """
 
     preprocess: PreprocessConfig = field(default_factory=lambda: PreprocessConfig(specular=False))
     validate: bool = True
+    equalize_size: bool = True
     part_threshold: float = DEFAULT_PART_THRESHOLD
     damage_threshold: float = DEFAULT_DAMAGE_THRESHOLD
     min_overlap: float = DEFAULT_MIN_OVERLAP
+    merge: MergeSettings = field(default_factory=MergeSettings)
     part_max_distance: float = DEFAULT_PART_MAX_DISTANCE
     damage_max_distance: float = DEFAULT_DAMAGE_MAX_DISTANCE
     min_view_points: int = DEFAULT_MIN_VIEW_POINTS
@@ -115,14 +122,19 @@ class PairPipeline:
                    checkpoints={"partes": parts_checkpoint, "danos": damage_checkpoint})
 
     def analyze_image(self, path: str, label: str, settings: PipelineSettings,
-                      file_name: Optional[str] = None) -> ImageResult:
+                      file_name: Optional[str] = None, max_long_side: Optional[int] = None) -> ImageResult:
         """M1 then M2+M3 on one photo file.
+
+        Args:
+            max_long_side: Long-side limit set by :meth:`analyze_pair` to
+                equalize A and B; ``None`` keeps the size.
 
         Raises:
             ImageValidationError: when M1 rejects the file.
         """
         start = time.perf_counter()
-        pre = preprocess_file(path, settings.preprocess, validate=settings.validate)
+        pre = preprocess_file(path, settings.preprocess, validate=settings.validate,
+                              max_long_side=max_long_side)
         if file_name:
             pre.metadata["archivo"] = file_name
         m1_seconds = time.perf_counter() - start
@@ -133,7 +145,7 @@ class PairPipeline:
                                  image_label=label, file_name=pre.metadata["archivo"],
                                  part_threshold=settings.part_threshold,
                                  damage_threshold=settings.damage_threshold,
-                                 min_overlap=settings.min_overlap)
+                                 min_overlap=settings.min_overlap, merge=settings.merge)
         m3_seconds = time.perf_counter() - start
         return ImageResult(image=pre.image, metadata=pre.metadata, analysis=analysis,
                            seconds={"m1": round(m1_seconds, 2), "m2_m3": round(m3_seconds, 2)})
@@ -169,14 +181,19 @@ class PairPipeline:
         """Both photos of a rental through every module.
 
         Both files go through M1 before any detector runs, so a rejected
-        photo B does not cost an inference on A.
+        photo B does not cost an inference on A. With ``equalize_size`` the
+        larger photo is reduced to the long side of the other.
         """
         settings = settings or PipelineSettings()
         if settings.validate:
             validate_image(path_a)
             validate_image(path_b)
+        limit_a = limit_b = None
+        if settings.equalize_size:
+            limit_a, limit_b = pair_max_long_sides(upright_size(inspect_image(path_a)),
+                                                   upright_size(inspect_image(path_b)))
 
-        result_a = self.analyze_image(path_a, "A", settings, file_name=name_a)
-        result_b = self.analyze_image(path_b, "B", settings, file_name=name_b)
+        result_a = self.analyze_image(path_a, "A", settings, file_name=name_a, max_long_side=limit_a)
+        result_b = self.analyze_image(path_b, "B", settings, file_name=name_b, max_long_side=limit_b)
         comparison, change_map = self.compare(result_a, result_b, settings, force)
         return PairResult(a=result_a, b=result_b, comparison=comparison, change_map=change_map)

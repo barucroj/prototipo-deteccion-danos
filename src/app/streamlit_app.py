@@ -24,6 +24,7 @@ from src.app.view import comparison_rows, damage_rows, part_rows, to_display  # 
 from src.detection_common.visualize import draw_detections  # noqa: E402
 from src.m1_preprocessing.pipeline import PreprocessConfig  # noqa: E402
 from src.m1_preprocessing.validation import ImageValidationError  # noqa: E402
+from src.m3_damage.assignment.merge import DEFAULT_MERGE_CONTAINMENT, DEFAULT_MERGE_IOU, MergeSettings  # noqa: E402
 from src.m3_damage.assignment.render import draw_analysis  # noqa: E402
 from src.m4_comparison.report import CHANGE_MAP_FILE, REPORT_FILE  # noqa: E402
 from src.pipeline.orchestrator import (DEFAULT_DAMAGE_CHECKPOINT, DEFAULT_PARTS_CHECKPOINT,  # noqa: E402
@@ -53,6 +54,9 @@ def sidebar() -> PipelineSettings:
     st.sidebar.header("Configuración")
     st.sidebar.subheader("M1. Preprocesamiento")
     validate = st.sidebar.checkbox("Exigir resolución mínima 1920×1080", value=True)
+    equalize_size = st.sidebar.checkbox(
+        "Igualar el tamaño de A y B", value=True,
+        help="Reduce la foto más grande al lado largo de la otra; la más chica nunca se agranda.")
     specular = st.sidebar.checkbox(
         "Reducir reflejos especulares", value=False,
         help="Los modelos vigentes (car_parts/v2, damage/v2) se entrenaron con imágenes crudas.")
@@ -64,6 +68,14 @@ def sidebar() -> PipelineSettings:
     min_overlap = st.sidebar.slider(
         "Solapamiento mínimo daño→parte", 0.05, 0.95, 0.50, 0.05,
         help="Fracción del daño que debe caer dentro de una parte para asignársela.")
+    merge_enabled = st.sidebar.checkbox(
+        "Fusionar daños del mismo tipo en la misma región", value=True,
+        help="Misma parte y máscaras que se solapan (IoU o contención). Umbrales sin calibrar.")
+    merge_iou = st.sidebar.slider("Fusión: IoU mínimo de máscaras", 0.05, 0.95, DEFAULT_MERGE_IOU, 0.05,
+                                  disabled=not merge_enabled)
+    merge_containment = st.sidebar.slider(
+        "Fusión: contención mínima", 0.05, 1.0, DEFAULT_MERGE_CONTAINMENT, 0.05, disabled=not merge_enabled,
+        help="Fracción de la máscara más chica que cae dentro de la otra.")
 
     st.sidebar.subheader("M4. Comparación")
     distance_help = "Sin calibrar: aún no hay pares A/B con ground truth."
@@ -77,8 +89,9 @@ def sidebar() -> PipelineSettings:
         st.caption(f"Daños: `{os.path.relpath(DEFAULT_DAMAGE_CHECKPOINT, PROJECT_ROOT)}`")
 
     return PipelineSettings(preprocess=PreprocessConfig(specular=specular, clahe=clahe), validate=validate,
-                            part_threshold=part_threshold, damage_threshold=damage_threshold,
+                            equalize_size=equalize_size, part_threshold=part_threshold, damage_threshold=damage_threshold,
                             min_overlap=min_overlap, part_max_distance=part_max_distance,
+                            merge=MergeSettings(merge_enabled, merge_iou, merge_containment),
                             damage_max_distance=damage_max_distance)
 
 

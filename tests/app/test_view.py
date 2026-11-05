@@ -19,7 +19,7 @@ REPORT_B = {"partes": [],
 
 def test_damage_rows_translate_and_name_the_part_instance():
     assert damage_rows(REPORT_A) == [{"ID": "A-01", "Tipo": "Rayón", "Confianza": 0.88,
-                                      "Parte": "front_door (p-01)", "Solapamiento": 0.93, "Área (px)": 10}]
+                                      "Parte": "front_door (p-01)", "Solapamiento": 0.93, "Área (px)": 10, "Fusiona": ""}]
     assert damage_rows(REPORT_B)[0]["Parte"] == UNASSIGNED
 
 

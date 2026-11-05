@@ -216,11 +216,22 @@ Las rutas en notebooks se resuelven relativas a la raíz del proyecto, no hardco
   mensaje está en español para el usuario.
 - `pipeline.py` — `load_image()` (BGR derecho según EXIF), `preprocess_image()` (reflejos →
   CLAHE) y `preprocess_file()` (validación + carga + pasos + metadatos). `PreprocessConfig`:
-  reflejos **activados** y CLAHE apagado por defecto. Conserva el tamaño original.
+  reflejos **activados** y CLAHE apagado por defecto. Conserva el tamaño salvo con `max_long_side` (ver `pair_size.py`).
 - `torch_transform.py` — M1 como transform de dataset (variantes `raw`, `specular`, `clahe`,
   `both`); lo usa `--preprocess` del trainer (train **y** val) y `ap_experiment.py`.
 - `ap_experiment.py` — COCO AP de un detector con cada variante de M1 contra imágenes crudas
   (bootstrap pareado, IC 95 %); con `--retrained` compara un modelo reentrenado con M1.
+- `pair_size.py` — iguala la escala del par: la foto con lado largo mayor se reduce (INTER_AREA) al
+  lado largo de la otra; la chica **nunca** se agranda. Lo aplica el orquestador
+  (`PipelineSettings.equalize_size`, activado; casilla en Streamlit) vía
+  `preprocess_file(max_long_side=…)`, después de EXIF y antes de los pasos ópticos; queda como paso
+  `igualar_tamano_par` (escala, tamaño antes/después) en los metadatos. Las cajas de M3 quedan en
+  píxeles de la imagen reducida: la evaluación escala el GT con el tamaño de la imagen etiquetada
+  (`PairGroundTruth.size_a/size_b`, `metrics.scale_boxes`), así `bbox_real_*` está en píxeles de la
+  imagen analizada. Medido el 2026-11-04 en `batch2` (p01, p04, p08, p14): igualar no cambia el
+  veredicto de `view_check` (puntos 13→12, 10→9, 19→20, 0→0).
+- `denoise.py` — `cv2.fastNlMeansDenoisingColored` (h=5) sobre una carpeta. Herramienta suelta,
+  **fuera del pipeline por decisión del usuario**; quita ruido, no sube la resolución.
 - `normalization.py` — `preprocess_pipeline()` = CLAHE (canal L en LAB) → letterbox a 512×512
   → ImageNet mean/std + CHW. **Contradice la spec de M1**: no conectarlo a los detectores
   (`pipeline.py` solo reutiliza su `apply_clahe_rgb`). Probado en `test_normalization.py`.
@@ -514,6 +525,7 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   `damage/v2` una sola vez; `analyze_pair(path_a, path_b, PipelineSettings)` valida **ambas**
   fotos antes de cualquier inferencia y corre M1 → M2+M3 sobre A y B y luego M4.
   `PipelineSettings`: pasos de M1 (reflejos apagados, ver M1), validación de resolución,
+  igualar el tamaño del par (activado),
   umbrales de partes (0.7), daños (0.5), solapamiento (0.5), distancias de M4 (0.25 y 0.15) y
   verificación de vista (40 puntos, solape 0.5). `PairResult` trae `comparison` (reporte de M4)
   y `change_map` (BGR, `None` si el par quedó bloqueado). `compare(result_a, result_b, settings,
@@ -618,7 +630,7 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
 `test_classify_damages.py`, `test_report.py`, `test_render.py`, `test_view_check.py`),
 `tests/pipeline/test_orchestrator.py`, `tests/app/` (`test_view.py`, `test_evaluation_view.py`) y
 `tests/evaluation/` (`test_ground_truth.py`, `test_metrics.py`, `test_evaluation_report.py`,
-`test_run.py`, `test_sweep.py`). Resultado al 2026-11-03: 313 pasan.
+`test_run.py`, `test_sweep.py`). Resultado al 2026-11-04: 347 pasan.
 Los `manual_inference.py` de `tests/m2_parts/`, `tests/m3_damage/detector/` y
 `tests/m3_damage/assignment/` son demos con GUI, no se colectan.
 
