@@ -112,3 +112,21 @@ def test_files_and_figures_are_written(tmp_path):
     markdown = (tmp_path / MARKDOWN_FILE).read_text(encoding="utf-8")
     assert "Mejor umbral" in markdown and "| 0.50 ◀ |" in markdown and "figuras/prf_vs_umbral.png" in markdown
     assert CSV_FILE in paths["csv"]
+
+
+def test_sweep_applies_the_hysteresis_at_each_threshold():
+    # The same dent: 0.45 in A and 0.8 in B. Without hysteresis it is new from 0.5 up.
+    truth = PairGroundTruth("p01", "x", "p01_x_A.jpg", "p01_x_B.jpg",
+                            [LabeledDamage(1, "dent", (0, 0, 10, 10), 1)],
+                            [LabeledDamage(2, "dent", (0, 0, 10, 10), 1)])
+    pair = SimpleNamespace(a=SimpleNamespace(analysis=analysis("A", [("dent", 0.45, (0, 0, 10, 10))])),
+                           b=SimpleNamespace(analysis=analysis("B", [("dent", 0.8, (0, 0, 10, 10))])),
+                           comparison=m4_ok())
+    states = {}
+    for low in (None, 0.4):
+        pipeline = FakePipeline(pair)
+        results = sweep_pairs(pipeline, [truth], PipelineSettings(hysteresis_threshold=low), [0.5, 0.7], [0.3])
+        assert pipeline.settings.hysteresis_threshold is None
+        states[low] = {t: results[t][0.3][0]["danos"][0]["estado_predicho"] for t in results}
+    assert states[None] == {0.5: "nuevo", 0.7: "nuevo"}
+    assert states[0.4] == {0.5: "preexistente", 0.7: "preexistente"}

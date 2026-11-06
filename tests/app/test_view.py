@@ -39,7 +39,8 @@ def test_comparison_rows_put_new_damages_first_and_translate():
     rows = comparison_rows(report)
     assert [r["Estado"] for r in rows] == ["Nuevo", "Preexistente", "No visible"]
     assert rows[0] == {"Estado": "Nuevo", "Tipo": "Golpe", "Parte": UNASSIGNED, "Confianza": 0.88,
-                       "ID A": "—", "ID B": "B-02", "Distancia": None, "Revisar": "Sí"}
+                       "ID A": "—", "ID B": "B-02", "Distancia": None,
+                       "Pareja bajo el umbral": "No", "Revisar": "Sí"}
     assert rows[1]["Distancia"] == 0.04 and rows[1]["Revisar"] == "No"
 
 

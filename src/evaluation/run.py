@@ -24,6 +24,7 @@ def evaluation_config(batch_dir: str, annotations: Optional[str], settings, chec
             "umbral_partes": settings.part_threshold, "umbral_danos": settings.damage_threshold,
             "solapamiento_minimo": settings.min_overlap, "fusion": settings.merge.to_json(),
             "distancia_partes": settings.part_max_distance, "distancia_danos": settings.damage_max_distance,
+            "histeresis": settings.hysteresis_threshold,
             "vista_puntos": settings.min_view_points, "vista_solape": settings.min_view_overlap}
 
 

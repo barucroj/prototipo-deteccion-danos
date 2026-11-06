@@ -171,3 +171,14 @@ def test_scale_boxes_without_sizes_is_identity():
     assert scale_boxes([[1, 2, 3, 4]], None, {"width": 10, "height": 10}) == [[1.0, 2.0, 3.0, 4.0]]
     assert scale_boxes([[1, 2, 3, 4]], (10, 10), {"danos": []}) == [[1.0, 2.0, 3.0, 4.0]]
     assert scale_boxes([[1, 2, 3, 4]], (10, 10), {"width": 5, "height": 5}) == [[0.5, 1.0, 1.5, 2.0]]
+
+
+def test_a_weak_partner_used_by_m4_counts_as_the_detection_in_a():
+    gt = truth([labeled(1, "dent", [0, 0, 10, 10], 1)], [labeled(2, "dent", [0, 0, 10, 10], 1)])
+    report_a = {"danos": []}
+    report_b = {"danos": [detection("B-01", "dent", [0, 0, 10, 10])]}
+    m4 = comparison([entry("preexistente", "dent", "A-03", "B-01")])
+    m4["histeresis"] = {"umbral": 0.3, "a": [detection("A-03", "dent", [1, 0, 10, 10], 0.35)], "b": []}
+    result = evaluate_pair(gt, report_a, report_b, m4)
+    assert result["danos"][0]["estado_predicho"] == "preexistente" and result["danos"][0]["id_a"] == "A-03"
+    assert result["falsos"] == []

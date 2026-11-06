@@ -17,9 +17,10 @@ from src.m1_preprocessing.pipeline import PreprocessConfig, preprocess_file
 from src.m1_preprocessing.pair_size import pair_max_long_sides, upright_size
 from src.m1_preprocessing.validation import inspect_image, validate_image
 from src.m3_damage.assignment.analyze import (DEFAULT_DAMAGE_THRESHOLD, DEFAULT_MIN_OVERLAP,
-                                              DEFAULT_PART_THRESHOLD, ImageAnalysis, analyze_image)
+                                              DEFAULT_PART_THRESHOLD, ImageAnalysis, analyze_image,
+                                              split_support)
 from src.m3_damage.assignment.merge import MergeSettings
-from src.m4_comparison.damages import DEFAULT_DAMAGE_MAX_DISTANCE
+from src.m4_comparison.damages import DEFAULT_DAMAGE_MAX_DISTANCE, DEFAULT_HYSTERESIS_THRESHOLD
 from src.m4_comparison.parts import DEFAULT_PART_MAX_DISTANCE
 from src.m4_comparison.render import draw_change_map
 from src.m4_comparison.report import build_report
@@ -42,6 +43,11 @@ class PipelineSettings:
         equalize_size: Reduce the larger photo of the pair to the long side of
             the other (M1, :mod:`src.m1_preprocessing.pair_size`); on by default.
         merge: Merging of same-type damages in the same region (M3); on by default.
+        hysteresis_threshold: Low threshold of the hysteresis of M4: a damage
+            of one photo is searched among the detections of the other down
+            to this confidence before calling it new or not visible
+            (:mod:`src.m4_comparison.damages`). ``None`` turns it off; at or
+            above ``damage_threshold`` it has no effect.
     """
 
     preprocess: PreprocessConfig = field(default_factory=lambda: PreprocessConfig(specular=False))
@@ -53,6 +59,7 @@ class PipelineSettings:
     merge: MergeSettings = field(default_factory=MergeSettings)
     part_max_distance: float = DEFAULT_PART_MAX_DISTANCE
     damage_max_distance: float = DEFAULT_DAMAGE_MAX_DISTANCE
+    hysteresis_threshold: Optional[float] = DEFAULT_HYSTERESIS_THRESHOLD
     min_view_points: int = DEFAULT_MIN_VIEW_POINTS
     min_view_overlap: float = DEFAULT_MIN_VIEW_OVERLAP
 
@@ -66,12 +73,15 @@ class ImageResult:
         metadata: M1 metadata (source file, size, transformations).
         analysis: M3 result (report + masks).
         seconds: Wall time of M1 and of M2+M3, ``{"m1": .., "m2_m3": ..}``.
+        support: Detections between the hysteresis threshold and the damage
+            threshold, only used by M4 as partners; ``None`` without hysteresis.
     """
 
     image: np.ndarray
     metadata: dict
     analysis: ImageAnalysis
     seconds: Dict[str, float]
+    support: Optional[ImageAnalysis] = None
 
 
 @dataclass
@@ -139,16 +149,21 @@ class PairPipeline:
             pre.metadata["archivo"] = file_name
         m1_seconds = time.perf_counter() - start
 
+        low = settings.hysteresis_threshold
+        hysteresis = low is not None and low < settings.damage_threshold
         start = time.perf_counter()
         analysis = analyze_image(pre.image, self.parts_model, self.part_categories,
                                  self.damage_model, self.damage_categories, self.device,
                                  image_label=label, file_name=pre.metadata["archivo"],
                                  part_threshold=settings.part_threshold,
-                                 damage_threshold=settings.damage_threshold,
+                                 damage_threshold=low if hysteresis else settings.damage_threshold,
                                  min_overlap=settings.min_overlap, merge=settings.merge)
+        support = None
+        if hysteresis:
+            analysis, support = split_support(analysis, settings.damage_threshold)
         m3_seconds = time.perf_counter() - start
         return ImageResult(image=pre.image, metadata=pre.metadata, analysis=analysis,
-                           seconds={"m1": round(m1_seconds, 2), "m2_m3": round(m3_seconds, 2)})
+                           seconds={"m1": round(m1_seconds, 2), "m2_m3": round(m3_seconds, 2)}, support=support)
 
     def compare(self, result_a: ImageResult, result_b: ImageResult, settings: PipelineSettings,
                 force: bool = False) -> Tuple[dict, Optional[np.ndarray]]:
@@ -167,12 +182,19 @@ class PairPipeline:
                                settings.min_view_points, settings.min_view_overlap)
 
         report_b = analysis_b.report
+        hysteresis = result_a.support is not None and result_b.support is not None
         comparison = build_report(analysis_a.report, report_b, settings.part_max_distance,
                                   settings.damage_max_distance, modelos=self.checkpoints,
-                                  vista=view.to_json(), forzada=force and not view.comparable)
+                                  vista=view.to_json(), forzada=force and not view.comparable,
+                                  apoyo_a=result_a.support.report["danos"] if hysteresis else None,
+                                  apoyo_b=result_b.support.report["danos"] if hysteresis else None,
+                                  umbral_apoyo=settings.hysteresis_threshold if hysteresis else None)
         if comparison["mapa_cambios"] is None:
             return comparison, None
         masks_b = {dano["id"]: mask for dano, mask in zip(report_b["danos"], analysis_b.damages.masks)}
+        if hysteresis:
+            masks_b.update({dano["id"]: mask for dano, mask in
+                            zip(result_b.support.report["danos"], result_b.support.damages.masks)})
         return comparison, draw_change_map(result_b.image, comparison, masks_b)
 
     def analyze_pair(self, path_a: str, path_b: str, settings: Optional[PipelineSettings] = None,
