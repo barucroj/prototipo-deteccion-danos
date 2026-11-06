@@ -88,6 +88,8 @@ def evaluate_pair(truth: PairGroundTruth, report_a: dict, report_b: dict, compar
     Args:
         report_a / report_b: M3 reports (``danos`` with ``id``, ``tipo``, ``bbox``).
         comparison: M4 report; ``mapa_cambios`` is ``None`` for a blocked pair.
+            The support detections it lists in ``histeresis`` are added to
+            the detections of each image.
 
     The labeled boxes are brought to the pixels the detector saw (M1 may have
     reduced one photo to equalize the pair, see :func:`scale_boxes`), so
@@ -98,7 +100,9 @@ def evaluate_pair(truth: PairGroundTruth, report_a: dict, report_b: dict, compar
         one entry per real damage and per false detection.
     """
     blocked = comparison["mapa_cambios"] is None
-    detected_a, detected_b = report_a["danos"], report_b["danos"]
+    # A support detection that M4 used as a partner (hysteresis) counts as a detection.
+    support = comparison.get("histeresis") or {"a": [], "b": []}
+    detected_a, detected_b = report_a["danos"] + support["a"], report_b["danos"] + support["b"]
     real_a = scale_boxes([x.bbox for x in truth.danos_a], truth.size_a, report_a)
     real_b = scale_boxes([x.bbox for x in truth.danos_b], truth.size_b, report_b)
     match_a = {r: (detected_a[d]["id"], iou) for r, d, iou in

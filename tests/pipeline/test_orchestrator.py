@@ -172,3 +172,23 @@ def test_equalizing_can_be_turned_off(tmp_path):
                                         write_image(tmp_path / "b.png", 640, 480), settings)
     assert pair.b.image.shape[:2] == (480, 640)
     assert pair.b.metadata["transformaciones"] == []
+
+
+def test_hysteresis_finds_a_weak_partner_in_a(tmp_path):
+    def run(low):
+        pipeline = make_pipeline()
+        pipeline.damage_model = SequenceModel([FakeModel([2], [0.35], [(0.1, 0.1, 0.2, 0.2)]),
+                                               FakeModel([2], [0.9], [(0.1, 0.1, 0.2, 0.2)])])
+        settings = PipelineSettings(preprocess=PreprocessConfig(specular=False), validate=False,
+                                    hysteresis_threshold=low)
+        return pipeline.analyze_pair(write_image(tmp_path / "a.png"), write_image(tmp_path / "b.png"), settings)
+
+    plain = run(None)
+    assert plain.comparison["resumen"]["nuevos"] == 1 and plain.comparison["histeresis"] is None
+    assert plain.a.support is None and plain.a.analysis.report["danos"] == []
+
+    pair = run(0.3)
+    assert pair.comparison["resumen"] == {"nuevos": 0, "preexistentes": 1, "no_visibles": 0}
+    assert pair.a.analysis.report["danos"] == [] and len(pair.a.support.report["danos"]) == 1
+    assert pair.comparison["danos"][0]["histeresis"] is True
+    assert pair.comparison["histeresis"]["a"][0]["id"] == "A-01"

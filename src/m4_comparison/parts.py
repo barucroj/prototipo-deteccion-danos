@@ -50,6 +50,11 @@ class PartMatching:
         """Part id in A -> matched part id in B."""
         return {m.parte_id_a: m.parte_id_b for m in self.pares}
 
+    def swapped(self) -> "PartMatching":
+        """The same matching seen from B (B plays A and A plays B)."""
+        return PartMatching([PartMatch(m.clase_parte, m.parte_id_b, m.parte_id_a, m.distancia) for m in self.pares],
+                            solo_a=list(self.solo_b), solo_b=list(self.solo_a))
+
 
 def box_center(bbox, width: float, height: float) -> Tuple[float, float]:
     """Centre of an ``[x1, y1, x2, y2]`` box, normalized to the image size."""

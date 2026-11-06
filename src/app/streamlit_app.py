@@ -26,6 +26,7 @@ from src.m1_preprocessing.pipeline import PreprocessConfig  # noqa: E402
 from src.m1_preprocessing.validation import ImageValidationError  # noqa: E402
 from src.m3_damage.assignment.merge import DEFAULT_MERGE_CONTAINMENT, DEFAULT_MERGE_IOU, MergeSettings  # noqa: E402
 from src.m3_damage.assignment.render import draw_analysis  # noqa: E402
+from src.m4_comparison.damages import DEFAULT_HYSTERESIS_THRESHOLD  # noqa: E402
 from src.m4_comparison.report import CHANGE_MAP_FILE, REPORT_FILE  # noqa: E402
 from src.pipeline.orchestrator import (DEFAULT_DAMAGE_CHECKPOINT, DEFAULT_PARTS_CHECKPOINT,  # noqa: E402
                                        PairPipeline, PipelineSettings)
@@ -83,6 +84,12 @@ def sidebar() -> PipelineSettings:
                                           help=distance_help)
     damage_max_distance = st.sidebar.slider("Distancia máxima entre daños", 0.05, 0.50, 0.15, 0.05,
                                             help=distance_help)
+    hysteresis = st.sidebar.checkbox(
+        "Buscar la pareja con un umbral más bajo (histéresis)", value=True,
+        help="Antes de llamar nuevo o no visible a un daño, lo busca en la otra foto entre las detecciones "
+             "de menor confianza. Esas detecciones nunca se reportan solas.")
+    hysteresis_threshold = st.sidebar.slider("Umbral bajo de la histéresis", 0.05, 0.95, DEFAULT_HYSTERESIS_THRESHOLD,
+                                             0.05, disabled=not hysteresis)
 
     with st.sidebar.expander("Modelos"):
         st.caption(f"Partes: `{os.path.relpath(DEFAULT_PARTS_CHECKPOINT, PROJECT_ROOT)}`")
@@ -92,7 +99,8 @@ def sidebar() -> PipelineSettings:
                             equalize_size=equalize_size, part_threshold=part_threshold, damage_threshold=damage_threshold,
                             min_overlap=min_overlap, part_max_distance=part_max_distance,
                             merge=MergeSettings(merge_enabled, merge_iou, merge_containment),
-                            damage_max_distance=damage_max_distance)
+                            damage_max_distance=damage_max_distance,
+                            hysteresis_threshold=hysteresis_threshold if hysteresis else None)
 
 
 def show_image_result(result, title: str) -> None:

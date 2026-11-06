@@ -86,7 +86,8 @@ def save_evaluation(output_dir: str, config: dict, summaries: Dict[float, dict],
              f"- Pares: {summaries[main_iou]['pares']} (bloqueados por la verificación de vista: "
              f"{summaries[main_iou]['pares_bloqueados']}); forzados: {'sí' if config['forzar'] else 'no'}",
              f"- Umbrales: partes {config['umbral_partes']}, daños {config['umbral_danos']}, "
-             f"distancia de partes {config['distancia_partes']}, distancia de daños {config['distancia_danos']}",
+             f"distancia de partes {config['distancia_partes']}, distancia de daños {config['distancia_danos']}, "
+             f"histéresis {config.get('histeresis') or 'no'}",
              ""]
     for iou in [main_iou] + sorted(i for i in summaries if i != main_iou):
         lines += _summary_markdown(iou, summaries[iou], iou == main_iou)

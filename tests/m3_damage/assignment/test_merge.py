@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pytest
 
-from src.m3_damage.assignment.analyze import Detections, finish_analysis
+from src.m3_damage.assignment.analyze import Detections, finish_analysis, restrict_damages, split_support
 from src.m3_damage.assignment.assign import assign_damages
 from src.m3_damage.assignment.merge import (NO_MERGE, MergeSettings, mask_box, mask_overlap, merge_detections,
                                             merge_groups)
@@ -139,7 +139,6 @@ def test_merge_groups_and_detections_directly():
 
 
 def test_threshold_filter_happens_before_merging():
-    from src.evaluation.sweep import restrict_damages
     # A confident dent and a weak copy that extends it: at 0.5 they merge, at 0.7 the copy is gone.
     result = analyze([("dent", 0.9, (10, 10, 40, 40)), ("dent", 0.6, (10, 10, 40, 50))])
     assert result.report["danos"][0]["bbox"] == [10.0, 10.0, 40.0, 50.0]
@@ -147,3 +146,15 @@ def test_threshold_filter_happens_before_merging():
     (dano,) = kept.report["danos"]
     assert dano["bbox"] == [10.0, 10.0, 40.0, 40.0] and dano["fusionados"] is None
     assert kept.report["fusion"]["activa"] is True
+
+
+def test_split_support_keeps_weak_damages_with_their_own_ids():
+    # A strong dent with a weak copy (merged into it), a weak scratch alone and a strong crack.
+    low = analyze([("dent", 0.9, (10, 10, 40, 40)), ("crack", 0.8, (120, 10, 140, 20)),
+                   ("dent", 0.4, (10, 10, 40, 50)), ("scratch", 0.35, (150, 30, 190, 40))])
+    main, support = split_support(low, 0.5)
+    assert [(d["id"], d["tipo"]) for d in main.report["danos"]] == [("B-01", "dent"), ("B-02", "crack")]
+    # The merged dent has a member above 0.5, so it is a damage, not support.
+    assert [(d["id"], d["tipo"]) for d in support.report["danos"]] == [("B-04", "scratch")]
+    assert support.damages.masks.shape == (1, H, W) and support.report["umbral_danos"] == low.report["umbral_danos"]
+    assert main.report["umbral_danos"] == 0.5

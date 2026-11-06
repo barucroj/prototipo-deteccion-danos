@@ -12,6 +12,11 @@ scaling to the size of B. It is an estimate, used to draw the change map.
 A pair that fails the view check of :mod:`src.m4_comparison.view_check` is
 blocked: no damage is classified and there is no change map, unless the agent
 forces the comparison, which is recorded and sends every damage to review.
+
+With hysteresis (``apoyo_a`` / ``apoyo_b``, see :mod:`src.m4_comparison.damages`)
+a damage can be preexisting through a partner below the damage threshold. The
+support detections used as partners are listed in ``histeresis``, so every
+``id_a`` / ``id_b`` of the report can be looked up.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, List, Mapping, Optional, Sequence
 
 import cv2
 import numpy as np
@@ -83,6 +88,7 @@ def _compared_damage(status: DamageStatus, by_id_a: Mapping[str, dict], by_id_b:
         "pos_relativa": dano["pos_relativa"],
         "distancia": status.distancia,
         "metodo": status.metodo,
+        "histeresis": status.histeresis,
         "requiere_revision": forzada or status.estado == NO_VISIBLE or status.parte is None,
     }
 
@@ -91,7 +97,8 @@ def build_report(report_a: dict, report_b: dict,
                  part_max_distance: float = DEFAULT_PART_MAX_DISTANCE,
                  damage_max_distance: float = DEFAULT_DAMAGE_MAX_DISTANCE,
                  modelos: Optional[Dict[str, str]] = None, vista: Optional[dict] = None,
-                 forzada: bool = False) -> dict:
+                 forzada: bool = False, apoyo_a: Optional[Sequence[dict]] = None,
+                 apoyo_b: Optional[Sequence[dict]] = None, umbral_apoyo: Optional[float] = None) -> dict:
     """Compare two M3 reports and return the M4 report of the pair.
 
     Args:
@@ -101,13 +108,24 @@ def build_report(report_a: dict, report_b: dict,
         modelos: Checkpoints that produced the M3 reports, ``None`` if unknown.
         vista: View check as a dict, ``None`` if it was not run.
         forzada: The agent chose to compare a pair that failed the check.
+        apoyo_a / apoyo_b: Support detections of each image for the
+            hysteresis, below the damage threshold; ``None`` = no hysteresis.
+        umbral_apoyo: Lowest confidence of the support detections, recorded.
     """
     blocked = vista is not None and not vista["comparable"] and not forzada
+    apoyo_a, apoyo_b = list(apoyo_a or []), list(apoyo_b or [])
+    for danos_m3, apoyo in ((report_a["danos"], apoyo_a), (report_b["danos"], apoyo_b)):
+        clash = {d["id"] for d in danos_m3} & {d["id"] for d in apoyo}
+        if clash:
+            raise ValueError(f"support detections reuse damage ids: {sorted(clash)}")
     danos: List[dict] = []
+    used_a, used_b = set(), set()
     if not blocked:
-        comparison = compare_reports(report_a, report_b, part_max_distance, damage_max_distance)
-        by_id_a = {d["id"]: d for d in report_a["danos"]}
-        by_id_b = {d["id"]: d for d in report_b["danos"]}
+        comparison = compare_reports(report_a, report_b, part_max_distance, damage_max_distance, apoyo_a, apoyo_b)
+        by_id_a = {d["id"]: d for d in report_a["danos"] + apoyo_a}
+        by_id_b = {d["id"]: d for d in report_b["danos"] + apoyo_b}
+        used_a = {s.id_a for s in comparison.danos if s.histeresis}
+        used_b = {s.id_b for s in comparison.danos if s.histeresis}
         danos = [_compared_damage(status, by_id_a, by_id_b, report_a, report_b, comparison.partes, forzada)
                  for status in comparison.danos]
 
@@ -120,6 +138,11 @@ def build_report(report_a: dict, report_b: dict,
         "modelos": modelos,
         "verificacion_vista": vista,
         "comparacion_forzada": forzada,
+        "histeresis": None if umbral_apoyo is None else {
+            "umbral": umbral_apoyo,
+            "a": [d for d in apoyo_a if d["id"] in used_a],
+            "b": [d for d in apoyo_b if d["id"] in used_b],
+        },
         "resumen": {
             "nuevos": counts[NUEVO],
             "preexistentes": counts[PREEXISTENTE],

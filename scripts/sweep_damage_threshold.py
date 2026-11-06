@@ -29,6 +29,7 @@ from src.m3_damage.assignment.analyze import DEFAULT_PART_THRESHOLD  # noqa: E40
 from src.m4_comparison.damages import DEFAULT_DAMAGE_MAX_DISTANCE  # noqa: E402
 from src.m4_comparison.parts import DEFAULT_PART_MAX_DISTANCE  # noqa: E402
 from src.m3_damage.assignment.merge import add_merge_arguments, merge_settings_from_args  # noqa: E402
+from src.m4_comparison.damages import add_hysteresis_arguments, hysteresis_from_args  # noqa: E402
 from src.pipeline.orchestrator import (DEFAULT_DAMAGE_CHECKPOINT, DEFAULT_PARTS_CHECKPOINT,  # noqa: E402
                                        PairPipeline, PipelineSettings)
 
@@ -50,6 +51,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--part-max-distance", type=float, default=DEFAULT_PART_MAX_DISTANCE)
     parser.add_argument("--damage-max-distance", type=float, default=DEFAULT_DAMAGE_MAX_DISTANCE)
     add_merge_arguments(parser)
+    add_hysteresis_arguments(parser)
     return parser
 
 
@@ -58,6 +60,7 @@ def main(argv=None) -> int:
     thresholds = sorted({round(t, 4) for t in args.thresholds})
     pairs = load_batch(args.batch, args.annotations)
     settings = PipelineSettings(validate=not args.no_validate, merge=merge_settings_from_args(args),
+                                hysteresis_threshold=hysteresis_from_args(args),
                                 part_threshold=args.part_threshold,
                                 damage_threshold=thresholds[0], part_max_distance=args.part_max_distance,
                                 damage_max_distance=args.damage_max_distance)

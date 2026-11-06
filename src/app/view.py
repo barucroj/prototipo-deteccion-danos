@@ -64,6 +64,7 @@ def comparison_rows(report: dict) -> List[dict]:
             "ID A": dano["id_a"] or "—",
             "ID B": dano["id_b"] or "—",
             "Distancia": dano["distancia"],
+            "Pareja bajo el umbral": "Sí" if dano.get("histeresis") else "No",
             "Revisar": "Sí" if dano["requiere_revision"] else "No",
         })
     return rows
