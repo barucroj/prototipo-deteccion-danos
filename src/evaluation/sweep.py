@@ -5,6 +5,8 @@ keeps a subset of those detections, and a damage's part assignment does not
 depend on the other damages, so each threshold only filters the detections and
 repeats M4; duplicates are merged again after filtering. The view check
 depends on the parts alone, so its verdict is reused for every threshold.
+With hysteresis the detectors run down to its threshold, and at each damage
+threshold the detections between both are the support of M4.
 
 The best threshold maximizes the F1 of new damages at the main IoU; ties go to
 fewer false new damages, then to the higher threshold.
@@ -18,12 +20,11 @@ import os
 from dataclasses import replace
 from typing import Callable, Dict, List, Optional, Sequence
 
-import numpy as np
 
 from src.evaluation.ground_truth import PairGroundTruth
 from src.evaluation.metrics import evaluate_pair, failed_pair, summarize
 from src.m1_preprocessing.validation import ImageValidationError
-from src.m3_damage.assignment.analyze import Detections, ImageAnalysis, finish_analysis
+from src.m3_damage.assignment.analyze import restrict_damages, split_support  # noqa: F401 (re-exported)
 from src.m4_comparison.report import build_report as build_comparison
 
 CSV_FILE = "barrido_umbral.csv"
@@ -36,26 +37,6 @@ CSV_COLUMNS = ["umbral_danos", "min_iou", "precision", "recall", "f1", "nuevos_r
                "detectados", "recall_deteccion", "detecciones_falsas"]
 
 
-def restrict_damages(analysis: ImageAnalysis, threshold: float) -> ImageAnalysis:
-    """The M3 result as if the damage detector had run at ``threshold`` (>= the original one).
-
-    Filters the detections **before** merging and merges again with the same
-    settings: a low-confidence duplicate that the threshold drops must not
-    keep enlarging the merged damage.
-    """
-    raw = analysis.raw_damages if analysis.raw_damages is not None else analysis.damages
-    raw_assignments = analysis.raw_assignments if analysis.raw_assignments is not None else analysis.assignments
-    keep = np.flatnonzero(raw.scores >= threshold)
-    damages = Detections(names=[raw.names[i] for i in keep], scores=raw.scores[keep],
-                         boxes=raw.boxes[keep], masks=raw.masks[keep])
-    assignments = [raw_assignments[i] for i in keep]
-    old = analysis.report
-    return finish_analysis(analysis.parts, damages, assignments, old["imagen"], old["width"], old["height"],
-                           file_name=old["archivo"], part_threshold=old["umbral_partes"],
-                           damage_threshold=threshold, min_overlap=old["umbral_solapamiento"],
-                           merge=analysis.merge)
-
-
 def sweep_pairs(pipeline, pairs: List[PairGroundTruth], settings, thresholds: Sequence[float],
                 ious: Sequence[float], force: bool = False,
                 on_pair: Optional[Callable[[int, PairGroundTruth, str], None]] = None) -> Dict[float, Dict[float, list]]:
@@ -65,7 +46,10 @@ def sweep_pairs(pipeline, pairs: List[PairGroundTruth], settings, thresholds: Se
         ``{threshold: {iou: [evaluate_pair result per pair]}}``.
     """
     thresholds = sorted(thresholds)
-    base = replace(settings, damage_threshold=thresholds[0])
+    low = settings.hysteresis_threshold
+    lowest = thresholds[0] if low is None else min(thresholds[0], low)
+    # Run the detectors once, at the lowest threshold, with no hysteresis of their own.
+    base = replace(settings, damage_threshold=lowest, hysteresis_threshold=None)
     results = {t: {iou: [] for iou in ious} for t in thresholds}
     for index, truth in enumerate(pairs):
         name_a, name_b = os.path.basename(truth.path_a), os.path.basename(truth.path_b)
@@ -82,11 +66,18 @@ def sweep_pairs(pipeline, pairs: List[PairGroundTruth], settings, thresholds: Se
 
         vista = pair.comparison["verificacion_vista"]
         for t in thresholds:
-            report_a = restrict_damages(pair.a.analysis, t).report
-            report_b = restrict_damages(pair.b.analysis, t).report
+            support = {}
+            if low is not None and low < t:
+                full_a, full_b = restrict_damages(pair.a.analysis, low), restrict_damages(pair.b.analysis, low)
+                (main_a, sup_a), (main_b, sup_b) = split_support(full_a, t), split_support(full_b, t)
+                report_a, report_b = main_a.report, main_b.report
+                support = {"apoyo_a": sup_a.report["danos"], "apoyo_b": sup_b.report["danos"], "umbral_apoyo": low}
+            else:
+                report_a = restrict_damages(pair.a.analysis, t).report
+                report_b = restrict_damages(pair.b.analysis, t).report
             comparison = build_comparison(report_a, report_b, settings.part_max_distance,
                                           settings.damage_max_distance, modelos=pipeline.checkpoints,
-                                          vista=vista, forzada=pair.comparison["comparacion_forzada"])
+                                          vista=vista, forzada=pair.comparison["comparacion_forzada"], **support)
             for iou in ious:
                 results[t][iou].append(evaluate_pair(truth, report_a, report_b, comparison, iou))
         if on_pair:
@@ -144,7 +135,7 @@ def save_sweep(output_dir: str, config: dict, rows: List[dict], best: Optional[d
     lines = [f"# Barrido del umbral de confianza de daños: {config['lote']}", "",
              f"- Pares: {config['pares']}; IoU principal {main_iou}; forzados: {'sí' if config['forzar'] else 'no'}",
              f"- Fijos: umbral de partes {config['umbral_partes']}, distancia de partes {config['distancia_partes']}, "
-             f"distancia de daños {config['distancia_danos']}", ""]
+             f"distancia de daños {config['distancia_danos']}, histéresis {config.get('histeresis') or 'no'}", ""]
     if best:
         lines += [f"**Mejor umbral (F1 de nuevos, IoU ≥ {main_iou}): {best['umbral_danos']:.2f}** — "
                   f"P {_fmt(best['precision'])}, R {_fmt(best['recall'])}, F1 {_fmt(best['f1'])}, "

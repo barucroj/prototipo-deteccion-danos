@@ -18,7 +18,7 @@ format is tested with synthetic detections.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -62,7 +62,7 @@ class ImageAnalysis:
     ``report["danos"]``. ``raw_damages`` / ``raw_assignments`` keep the
     detector's output before merging (``None`` = same as the merged ones), so
     a higher confidence threshold can be applied and merged again
-    (:func:`src.evaluation.sweep.restrict_damages`).
+    (:func:`restrict_damages`, :func:`split_support`).
     """
 
     report: dict
@@ -230,3 +230,49 @@ def analyze_image(image_bgr: np.ndarray, parts_model, part_categories: Dict[int,
     return finish_analysis(parts, damages, assignments, image_label, width, height, file_name=file_name,
                            part_threshold=part_threshold, damage_threshold=damage_threshold,
                            min_overlap=min_overlap, merge=merge)
+
+
+def restrict_damages(analysis: ImageAnalysis, threshold: float) -> ImageAnalysis:
+    """The M3 result as if the damage detector had run at ``threshold`` (>= the original one).
+
+    Filters the detections **before** merging and merges again with the same
+    settings: a low-confidence duplicate that the threshold drops must not
+    keep enlarging the merged damage. The detector returns them by descending
+    confidence, so a detection keeps its id at every threshold.
+    """
+    raw = analysis.raw_damages if analysis.raw_damages is not None else analysis.damages
+    raw_assignments = analysis.raw_assignments if analysis.raw_assignments is not None else analysis.assignments
+    keep = np.flatnonzero(raw.scores >= threshold)
+    damages = Detections(names=[raw.names[i] for i in keep], scores=raw.scores[keep],
+                         boxes=raw.boxes[keep], masks=raw.masks[keep])
+    assignments = [raw_assignments[i] for i in keep]
+    old = analysis.report
+    return finish_analysis(analysis.parts, damages, assignments, old["imagen"], old["width"], old["height"],
+                           file_name=old["archivo"], part_threshold=old["umbral_partes"],
+                           damage_threshold=threshold, min_overlap=old["umbral_solapamiento"],
+                           merge=analysis.merge)
+
+
+def split_support(analysis: ImageAnalysis, threshold: float) -> Tuple[ImageAnalysis, ImageAnalysis]:
+    """Split a low-threshold analysis into the damages and the hysteresis support.
+
+    Args:
+        analysis: M3 run at the low (support) threshold.
+        threshold: The damage threshold.
+
+    Returns:
+        ``(main, support)``: ``main`` is the analysis at ``threshold``;
+        ``support`` keeps, from the low-threshold analysis, only the merged
+        damages whose confidence is below ``threshold`` (a group with any
+        member above it is already a damage of ``main``). Their ids never
+        collide with the ones of ``main``.
+    """
+    main = restrict_damages(analysis, threshold)
+    keep = [i for i, score in enumerate(analysis.damages.scores) if score < threshold]
+    damages = analysis.damages
+    support_damages = Detections(names=[damages.names[i] for i in keep], scores=damages.scores[keep],
+                                 boxes=damages.boxes[keep], masks=damages.masks[keep])
+    report = dict(analysis.report, danos=[analysis.report["danos"][i] for i in keep])
+    support = ImageAnalysis(report=report, parts=analysis.parts, damages=support_damages,
+                            assignments=[analysis.assignments[i] for i in keep], merge=analysis.merge)
+    return main, support
