@@ -17,6 +17,14 @@ Then:
 * a damage of A with no pair is **no_visible**: flagged for review, never
   dropped (it may be hidden, missed by M3, or repaired).
 
+**Hysteresis.** A damage only exists above the damage threshold, but its
+partner on the other photo may come out a little below it (different light,
+reflections). Optionally, each side gets the *support* detections of the other
+side: those between a low threshold and the damage threshold. A damage left
+unpaired is searched again among them, with the same two stages; if found it
+is **preexistente** (``histeresis``), not new or not visible. Support
+detections never become a damage on their own.
+
 The distance threshold is not calibrated: there are no A/B pairs with ground
 truth yet.
 """
@@ -33,6 +41,8 @@ from src.m4_comparison.parts import (DEFAULT_PART_MAX_DISTANCE, PartMatching, bo
 #: Maximum distance between ``pos_relativa`` (stage 1) or normalized box
 #: centres (stage 2) of the same damage in A and B.
 DEFAULT_DAMAGE_MAX_DISTANCE = 0.15
+#: Lowest confidence of a support detection for the hysteresis. Not calibrated.
+DEFAULT_HYSTERESIS_THRESHOLD = 0.3
 
 NUEVO = "nuevo"
 PREEXISTENTE = "preexistente"
@@ -58,6 +68,7 @@ class DamageStatus:
     parte: Optional[str]
     distancia: Optional[float] = None
     metodo: Optional[str] = None
+    histeresis: bool = False
 
 
 @dataclass
@@ -89,19 +100,15 @@ def _match_same_type(damages_a: Sequence[dict], damages_b: Sequence[dict], posit
     return pairs
 
 
-def classify_damages(report_a: dict, report_b: dict, part_matching: PartMatching,
-                     max_distance: float = DEFAULT_DAMAGE_MAX_DISTANCE) -> List[DamageStatus]:
-    """Classify every damage of A and B given the matched parts.
+def _match_two_stages(danos_a: Sequence[dict], danos_b: Sequence[dict], report_a: dict, report_b: dict,
+                      part_matching: PartMatching, max_distance: float) -> Dict[str, Tuple[dict, float, str]]:
+    """Pair damages of A and B: by part, then what is left by image position.
 
     Returns:
-        One :class:`DamageStatus` per damage of B (in B's order), followed by
-        one per unmatched damage of A (in A's order). Every damage of both
-        reports appears exactly once.
+        ``{id in B: (damage in A, distance, method)}``.
     """
-    danos_a, danos_b = report_a["danos"], report_b["danos"]
-    matched: Dict[str, Tuple[dict, float, str]] = {}  # id in B -> (damage in A, distance, method)
+    matched: Dict[str, Tuple[dict, float, str]] = {}
     used_a = set()
-
     for part in part_matching.pares:
         in_a = [d for d in danos_a if d["parte_id"] == part.parte_id_a]
         in_b = [d for d in danos_b if d["parte_id"] == part.parte_id_b]
@@ -112,7 +119,6 @@ def classify_damages(report_a: dict, report_b: dict, part_matching: PartMatching
 
     left_a = [d for d in danos_a if d["id"] not in used_a]
     left_b = [d for d in danos_b if d["id"] not in matched]
-
     # Each side is normalized to its own image size.
     for dano_a, dano_b, distance in _match_same_type(
             left_a, left_b,
@@ -120,26 +126,74 @@ def classify_damages(report_a: dict, report_b: dict, part_matching: PartMatching
             lambda d: box_center(d["bbox"], report_b["width"], report_b["height"]),
             max_distance):
         matched[dano_b["id"]] = (dano_a, distance, POR_IMAGEN)
-        used_a.add(dano_a["id"])
+    return matched
+
+
+def classify_damages(report_a: dict, report_b: dict, part_matching: PartMatching,
+                     max_distance: float = DEFAULT_DAMAGE_MAX_DISTANCE,
+                     support_a: Sequence[dict] = (), support_b: Sequence[dict] = ()) -> List[DamageStatus]:
+    """Classify every damage of A and B given the matched parts.
+
+    Args:
+        support_a / support_b: Support detections of each image for the
+            hysteresis (same format as ``danos``, ids distinct from them);
+            empty = no hysteresis.
+
+    Returns:
+        One :class:`DamageStatus` per damage of B (in B's order), then one per
+        damage of A paired with a support detection of B, then one per
+        unpaired damage of A (in A's order). Every damage of both reports
+        appears exactly once; support detections only as partners.
+    """
+    danos_a, danos_b = report_a["danos"], report_b["danos"]
+    matched = _match_two_stages(danos_a, danos_b, report_a, report_b, part_matching, max_distance)
+    used_a = {dano_a["id"] for dano_a, _, _ in matched.values()}
+
+    left_b = [d for d in danos_b if d["id"] not in matched]
+    rescued_b = _match_two_stages(support_a, left_b, report_a, report_b, part_matching, max_distance)         if support_a and left_b else {}
+    left_a = [d for d in danos_a if d["id"] not in used_a]
+    # Matched with A as the "B" side: keys are ids of A.
+    rescued_a = _match_two_stages(support_b, left_a, report_b, report_a, part_matching.swapped(), max_distance)         if support_b and left_a else {}
 
     estados: List[DamageStatus] = []
     for dano in danos_b:
-        if dano["id"] in matched:
-            dano_a, distance, method = matched[dano["id"]]
+        if dano["id"] in matched or dano["id"] in rescued_b:
+            dano_a, distance, method = matched.get(dano["id"]) or rescued_b[dano["id"]]
             estados.append(DamageStatus(PREEXISTENTE, dano["tipo"], dano_a["id"], dano["id"],
-                                        dano["parte"], round(distance, 4), method))
+                                        dano["parte"], round(distance, 4), method,
+                                        histeresis=dano["id"] not in matched))
         else:
             estados.append(DamageStatus(NUEVO, dano["tipo"], None, dano["id"], dano["parte"]))
-    for dano in danos_a:
-        if dano["id"] not in used_a:
+    for dano in left_a:
+        if dano["id"] in rescued_a:
+            dano_b, distance, method = rescued_a[dano["id"]]
+            estados.append(DamageStatus(PREEXISTENTE, dano["tipo"], dano["id"], dano_b["id"],
+                                        dano_b["parte"], round(distance, 4), method, histeresis=True))
+    for dano in left_a:
+        if dano["id"] not in rescued_a:
             estados.append(DamageStatus(NO_VISIBLE, dano["tipo"], dano["id"], None, dano["parte"]))
     return estados
 
 
 def compare_reports(report_a: dict, report_b: dict,
                     part_max_distance: float = DEFAULT_PART_MAX_DISTANCE,
-                    damage_max_distance: float = DEFAULT_DAMAGE_MAX_DISTANCE) -> Comparison:
-    """Run M4 on the M3 reports of the before (A) and after (B) images."""
+                    damage_max_distance: float = DEFAULT_DAMAGE_MAX_DISTANCE,
+                    support_a: Sequence[dict] = (), support_b: Sequence[dict] = ()) -> Comparison:
+    """Run M4 on the M3 reports of the before (A) and after (B) images.
+
+    ``support_a`` / ``support_b``: support detections for the hysteresis.
+    """
     part_matching = match_parts(report_a, report_b, part_max_distance)
-    danos = classify_damages(report_a, report_b, part_matching, damage_max_distance)
+    danos = classify_damages(report_a, report_b, part_matching, damage_max_distance, support_a, support_b)
     return Comparison(partes=part_matching, danos=danos)
+
+
+def add_hysteresis_arguments(parser) -> None:
+    """``--hysteresis`` and ``--no-hysteresis`` for the CLIs."""
+    parser.add_argument("--hysteresis", type=float, default=DEFAULT_HYSTERESIS_THRESHOLD,
+                        help="lowest confidence of a partner on the other photo (M4)")
+    parser.add_argument("--no-hysteresis", action="store_true", help="look for partners only above the damage threshold")
+
+
+def hysteresis_from_args(args) -> Optional[float]:
+    return None if args.no_hysteresis else args.hysteresis

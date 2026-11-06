@@ -4,6 +4,7 @@ import json
 
 import cv2
 import numpy as np
+import pytest
 
 from src.m4_comparison.report import CHANGE_MAP_FILE, REPORT_FILE, build_report, expected_box_in_b, save_report
 from src.m4_comparison.parts import match_parts
@@ -136,3 +137,23 @@ def test_save_report_writes_both_files(tmp_path):
     with open(paths["json"], encoding="utf-8") as handle:
         assert json.load(handle) == json.loads(json.dumps(result))
     assert cv2.imread(paths["change_map"]).shape == image.shape
+
+
+def test_hysteresis_lists_only_the_weak_partners_used():
+    a = report("A", [], [DOOR_A])
+    b = report("B", [damage("B-01", "dent", [10, 10, 30, 20], None, None)], [DOOR_B])
+    weak_a = [damage("A-02", "dent", [10, 10, 30, 20], None, None, confianza=0.35),
+              damage("A-03", "crack", [150, 80, 160, 90], None, None, confianza=0.32)]
+    result = build_report(a, b, apoyo_a=weak_a, apoyo_b=[], umbral_apoyo=0.3)
+    assert result["resumen"] == {"nuevos": 0, "preexistentes": 1, "no_visibles": 0}
+    dano = result["danos"][0]
+    assert (dano["id_a"], dano["id_b"], dano["histeresis"]) == ("A-02", "B-01", True)
+    assert result["histeresis"] == {"umbral": 0.3, "a": [weak_a[0]], "b": []}
+    assert build_report(a, b)["histeresis"] is None and build_report(a, b)["danos"][0]["histeresis"] is False
+
+
+def test_support_ids_must_not_reuse_damage_ids():
+    a = report("A", [damage("A-01", "dent", [10, 10, 30, 20], None, None)], [DOOR_A])
+    with pytest.raises(ValueError, match="A-01"):
+        build_report(a, report("B", [], [DOOR_B]), apoyo_a=[damage("A-01", "dent", [0, 0, 5, 5], None, None)],
+                     apoyo_b=[], umbral_apoyo=0.3)

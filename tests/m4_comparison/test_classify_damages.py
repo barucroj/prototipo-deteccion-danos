@@ -112,3 +112,35 @@ def test_empty_reports():
     comparison = compare_reports(report("A", []), report("B", []))
     assert comparison.danos == []
     assert len(comparison.partes.pares) == 2
+
+
+# Hysteresis: partners below the damage threshold.
+
+def test_damage_of_b_with_a_weak_partner_in_a_is_preexisting():
+    a = report("A", [])
+    b = report("B", [damage("B-01", "dent", [10, 10, 30, 20], "p-01", [0.2, 0.15])])
+    weak_a = [damage("A-05", "dent", [11, 10, 31, 20], "p-01", [0.21, 0.15])]
+    assert by_estado(compare_reports(a, b)) == {(NUEVO, None, "B-01")}
+    status = compare_reports(a, b, support_a=weak_a).danos
+    assert [(s.estado, s.id_a, s.id_b, s.histeresis, s.metodo) for s in status] == \
+        [(PREEXISTENTE, "A-05", "B-01", True, POR_PARTE)]
+
+
+def test_damage_of_a_with_a_weak_partner_in_b_is_preexisting_not_hidden():
+    a = report("A", [damage("A-01", "dent", [10, 10, 30, 20], "p-01", [0.2, 0.15]),
+                     damage("A-02", "scratch", [60, 60, 80, 80], "p-01", [0.7, 0.7])])
+    b = report("B", [])
+    weak_b = [damage("B-04", "dent", [12, 10, 32, 20], None, None)]
+    status = compare_reports(a, b, support_b=weak_b).danos
+    assert [(s.estado, s.id_a, s.id_b, s.histeresis, s.metodo) for s in status] == \
+        [(PREEXISTENTE, "A-01", "B-04", True, POR_IMAGEN), (NO_VISIBLE, "A-02", None, False, None)]
+
+
+def test_weak_detections_never_become_damages_and_confirmed_pairs_come_first():
+    a = report("A", [damage("A-01", "dent", [10, 10, 30, 20], "p-01", [0.2, 0.15])])
+    b = report("B", [damage("B-01", "dent", [10, 10, 30, 20], "p-01", [0.2, 0.15])])
+    weak_a = [damage("A-03", "dent", [10, 10, 30, 20], "p-01", [0.2, 0.15]),
+              damage("A-04", "crack", [150, 50, 160, 60], "p-02", [0.5, 0.5])]
+    weak_b = [damage("B-02", "scratch", [150, 50, 160, 60], "p-02", [0.5, 0.5])]
+    status = compare_reports(a, b, support_a=weak_a, support_b=weak_b).danos
+    assert [(s.estado, s.id_a, s.id_b, s.histeresis) for s in status] == [(PREEXISTENTE, "A-01", "B-01", False)]
