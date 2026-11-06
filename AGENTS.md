@@ -450,6 +450,18 @@ Lógica determinista sobre los reportes JSON de M3 (`partes` con `id`/`clase_par
   en ambas etapas. Estados `nuevo`, `preexistente` (con `distancia` y `metodo`) y
   `no_visible`; cada daño aparece exactamente una vez (primero los de B en su orden, luego los
   de A sin pareja).
+  - **Histéresis** (2026-11-05): un daño sin pareja se busca otra vez entre las detecciones de la otra
+    foto con confianza entre el umbral bajo (`DEFAULT_HYSTERESIS_THRESHOLD = 0.3`) y el umbral de daños
+    ("apoyo"), con las mismas dos etapas. Si la encuentra es `preexistente` con `histeresis: true` (no
+    nuevo ni no visible). El apoyo nunca se reporta como daño propio; el reporte de M4 lista en
+    `histeresis` las detecciones de apoyo usadas, y la evaluación las cuenta como detecciones. M3:
+    `split_support()` y `restrict_damages()` en `assignment/analyze.py`. Activada por defecto
+    (`PipelineSettings.hysteresis_threshold`, casilla y deslizador en Streamlit, `--hysteresis` /
+    `--no-hysteresis` en los scripts). Medido con barrido forzado e IoU 0.3: `batch1` sin cambio en
+    recall (0.75: P 0.875 / R 0.538, igual; 0.6: FP 4 → 3), `batch2` (sin daños nuevos) nuevos falsos
+    12 → 8 en 0.75 y p14 deja de marcar su golpe preexistente como nuevo (preexistentes bien
+    clasificados 2 → 3 de 6). Los 8 falsos restantes son daños que M3 ve solo en B (rayones por
+    reflejos, sobre todo), que la histéresis no puede corregir. Umbral bajo **sin calibrar**.
 - `report.py` — `build_report()` arma el `ReporteComparacion` de la sección 4.9.2 (`imagen_a`,
   `imagen_b`, `umbral_distancia`, `resumen`, `danos`, `mapa_cambios`), más lo que piden RF09 y
   RNF05 y el diseño no traía: `umbral_distancia_partes`, `modelos` y, por daño, `confianza`,
@@ -527,7 +539,7 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   `PipelineSettings`: pasos de M1 (reflejos apagados, ver M1), validación de resolución,
   igualar el tamaño del par (activado),
   umbrales de partes (0.7), daños (0.5), solapamiento (0.5), distancias de M4 (0.25 y 0.15) y
-  verificación de vista (40 puntos, solape 0.5). `PairResult` trae `comparison` (reporte de M4)
+  histéresis de M4 (0.3) y verificación de vista (40 puntos, solape 0.5). `PairResult` trae `comparison` (reporte de M4)
   y `change_map` (BGR, `None` si el par quedó bloqueado). `compare(result_a, result_b, settings,
   force)` repite solo M4, sin inferencia: lo usa el botón "Comparar de todos modos".
   `PairResult.to_json()` = `{A: {m1, m3, segundos}, B: …, m4: {…}}`. Probado con modelos falsos
