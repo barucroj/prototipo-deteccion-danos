@@ -127,6 +127,12 @@ def seed_everything(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
+def format_per_class(stats: dict) -> str:
+    """``"bumper 0.612  door -  ..."``: AP@0.5:0.95 per class ('-' without ground truth)."""
+    return "  ".join(f"{name} {'-' if v['AP'] is None else format(v['AP'], '.3f')}"
+                     for name, v in sorted(stats.items()))
+
+
 PREDICTOR_PREFIXES = ("roi_heads.box_predictor.", "roi_heads.mask_predictor.")
 
 
@@ -358,6 +364,7 @@ def run_training(cfg, args) -> float:
             val_map = val_map50 = None
             coco_stats = {}
             per_class_ap = {}
+            per_class_coco = {}
 
             if is_eval_epoch:
                 auditor.start_phase("eval", len(valid_loader))
@@ -365,7 +372,7 @@ def run_training(cfg, args) -> float:
                     coco_stats = evaluate_coco(
                         model, valid_loader, device, valid_dataset.coco_gt,
                         image_ids=valid_dataset.coco_image_ids, with_masks=cfg.with_masks,
-                        on_batch=auditor.on_batch,
+                        on_batch=auditor.on_batch, per_class=per_class_coco,
                     )
                     # Checkpoint selection follows AP@0.5:0.95 of --select-by.
                     selected = coco_stats.get(args.select_by, {})
@@ -401,6 +408,9 @@ def run_training(cfg, args) -> float:
             if loss_components:
                 log("  Loss terms: " + "  ".join(
                     f"{k.replace('loss_', '')} {v:.4f}" for k, v in sorted(loss_components.items())))
+            for iou_type, label in (("bbox", "box"), ("segm", "mask")):
+                if per_class_coco.get(iou_type):
+                    log(f"  {label} AP per class: " + format_per_class(per_class_coco[iou_type]))
             log(f"  Time: {format_duration(epoch_time)}  |  Elapsed: {format_duration(elapsed)}"
                 f"  |  ETA: {format_duration(eta_seconds)}\n")
 
@@ -419,6 +429,8 @@ def run_training(cfg, args) -> float:
             }
             if coco_stats:
                 record["coco"] = coco_stats
+            if per_class_coco:
+                record["per_class"] = per_class_coco  # {iou_type: {class: AP, AP50, AP75, AR_100, instances}}
             if per_class_ap:
                 record["per_class_ap"] = {str(k): v for k, v in sorted(per_class_ap.items())}
             history.append(record)
