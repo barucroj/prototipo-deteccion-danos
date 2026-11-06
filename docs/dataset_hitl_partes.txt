@@ -1,0 +1,182 @@
+DATASET "CAR PARTS AND CAR DAMAGES" (HUMANS IN THE LOOP) - SOLO PARTES
+=====================================================================
+
+Procedencia
+  Dataset original: Humans in the Loop, "Car parts and car damages dataset".
+  https://humansintheloop.org/resources/datasets/car-parts-and-car-damages-dataset/
+  Fuente de la descarga: re-subida en Roboflow Universe, segun el usuario.
+  URL: PENDIENTE de confirmar por el usuario (candidata encontrada al buscar:
+  https://universe.roboflow.com/atheer-algarni-gvico/car-parts-human-in-the-loop).
+  Nota: los archivos estan en formato Supervisely (meta.json, ann/*.json) y
+  empaquetados con @PaxHeader, que no es un formato de exportacion de
+  Roboflow; conviene confirmar de donde salio el archivo.
+  Licencia: CC0 1.0 (dominio publico) segun la pagina de Humans in the Loop
+  (consultada el 2026-11-06). NO se reviso la licencia de la re-subida de
+  Roboflow Universe (otras re-subidas declaran CC BY 4.0).
+  Fecha de descarga: 2026-11-06 (confirmada por el usuario).
+  Etiquetadores (campo labelerLogin): GhazalehHITL, MojtabaHITL. Anotado en
+  enero de 2023; el archivo descargado esta empaquetado el 2023-04-25
+  (@PaxHeader).
+
+Ubicacion: data/raw/Car parts and car damages dataset/  (en .gitignore)
+
+  OJO: LAS CARPETAS VIENEN CON LOS NOMBRES INVERTIDOS.
+    "Car damages dataset/"  -> las 998 imagenes de PARTES (21 clases)
+    "Car parts dataset/"    -> las 814 imagenes de DANOS (8 clases: Scratch,
+                               Dent, Broken part, Paint chip, Missing part,
+                               Flaking, Corrosion, Cracked). No se usa.
+
+Formato: Supervisely.
+  meta.json (clases), File1/img/ (imagen), File1/ann/<imagen>.json (size +
+  objects: poligonos en pixeles, points.exterior y points.interior = huecos),
+  File1/masks_human/ y masks_machine/ (PNG derivados; no se usan).
+  Imagenes: 899 PNG + 99 JPG, todas horizontales. Lado largo min/mediana/max
+  562/736/916 px, lado corto 280/493/684 (mas chicas que Roboflow: 640x640).
+  15,767 poligonos, 0 imagenes sin objetos. Validacion: 0 con menos de 3
+  puntos, 0 de area 0, 0 mascaras vacias, 0 fuera de la imagen.
+  140 poligonos con huecos (Front-door 56, Back-door 53, Trunk 11,
+  Front-bumper 9, ...): en las puertas el hueco es la ventana.
+
+Partes y danos NO son disjuntos: 441 de las 998 imagenes de partes estan
+tambien en el conjunto de danos (mismo nombre y mismos pixeles).
+
+Vistas (deducidas de las partes presentes, aproximado): casi todo 3/4 -
+frente+lado+atras 370, frente+lado 357, lado+atras 179, solo frente 49,
+solo atras 24, solo lado 18. Coches siniestrados (subastas de salvamento).
+
+Conversion a COCO: src/m2_parts/hitl_dataset.py
+  ./venv_cuda/Scripts/python.exe -m src.m2_parts.hitl_dataset --splits data/raw/hitl_parts_coco/splits.json
+  -> data/raw/hitl_parts_coco/instances_{train,val,test}.json (file_name
+  apunta a "Car damages dataset/File1/img"). Categorias con los titulos
+  originales (ids 1..21 alfabeticos). Los poligonos con huecos se escriben
+  como varias piezas sin hueco (corte de 1 px por hueco): IoU contra la
+  mascara exacta >= 0.957 con nuestro rasterizador. pycocotools da valores
+  menores, pero ya difiere de OpenCV en poligonos sin hueco (es su
+  convencion de bordes).
+
+Mapa a las 10 clases: src/m2_parts/class_map_hitl.py (ids iguales a Roboflow).
+  Criterio (muestra en models/checkpoints/car_parts/_muestra_hitl_10c/):
+  - door: en las etiquetas originales, CON su ventana, a diferencia de
+    Roboflow (hallado 2026-11-06; la primera revision visual lo leyo mal).
+    Front-window/Back-window se etiquetan aparte pero quedan DENTRO de la
+    mascara de la puerta: 1069 de 1244 puertas de train contienen una ventana
+    y el 69 % de las ventanas caen >50 % dentro de una puerta (Roboflow: 12 de
+    585 y 1.8 %). El espejo tambien suele quedar dentro de la puerta delantera
+    (mediana 0.96). Las 109 puertas con hueco son la excepcion. Se corrige en
+    la conversion (ver CORRECCION DE PUERTAS). Hoja original:
+    models/checkpoints/car_parts/_muestra_hitl_10c/v2_door_hitl_test.jpg.
+  - glass: ventanas laterales etiquetadas; Back-window incluye la custodia.
+  - fender: Fender = salpicadera delantera; Quarter-panel = panel trasero
+    alrededor de la rueda trasera (back_fender de Roboflow).
+    Rocker-panel = estribo de carroceria bajo las puertas -> descartado.
+  - wheel: rueda completa (llanta + rin).
+  - light: solo Headlight y Tail-light; faros de niebla y direccionales SIN
+    etiqueta. Decidido 2026-11-06: light = faros y calaveras en TODOS los
+    mapas; en Roboflow los faros de niebla (left_fog_light, right_fog_lights,
+    fog_lights) e indicator_light pasan a None, y back_light tambien (la
+    muestra muestra un reflejante de la defensa o el medallon, no una
+    calavera).
+  Instancias por clase final (998 imagenes): bumper 1148, door 1638,
+  fender 1790, glass 3091, grille 577, hood 712, light 1635, mirror 987,
+  trunk 416, wheel 1750. Descartadas: Rocker-panel 860, Roof 793,
+  License-plate 370.
+
+CORRECCION DE PUERTAS (opcion A, decidida 2026-11-06), en hitl_dataset.fix_door,
+  igual en train, val y test: a cada puerta se le resta la union de las
+  ventanas (Front-window, Back-window) y espejos con mas del 50 % de su area
+  dentro de ella; se quitan fragmentos < 5 % del area original y se descarta
+  la puerta si conserva < 40 %. La mascara resultante (con huecos) se escribe
+  como piezas sin hueco (corte de 1 px por hueco, el mismo metodo que los
+  huecos originales: COCO en poligonos y nuestro cargador no representan
+  huecos). Resumen en data/raw/hitl_parts_coco/resumen_conversion.json.
+                 puertas  modificadas  descartadas  objetos restados
+    train        1311     1097         4            1646
+    val          161      141          0            205
+    test         166      151          0            229
+    total        1638     1389         4            2080
+  Area conservada en las modificadas (train): p5 0.61, p25 0.68, mediana
+  0.71, p75 0.74, p95 0.84, minimo 0.49; histograma 0.4-0.5: 2, 0.5-0.6: 35,
+  0.6-0.7: 410, 0.7-0.8: 569, 0.8-0.9: 49, 0.9-1.0: 32 (val y test igual,
+  mediana 0.71 y 0.72).
+
+  Primera verificacion con v2 (nunca vio HITL), door en el test de HITL:
+                        caja AP   mascara AP
+    antes               0.037     0.059
+    opcion A            0.038     0.292
+    test de Roboflow    0.679     0.719
+  La caja no mejoraba: el MARCO de la ventana quedaba pegado a la puerta
+  (mediana 5.3 % del area por encima del borde inferior de la ventana;
+  Roboflow 0.0 %) y llevaba la caja hasta el techo.
+
+QUITAR EL MARCO (decidido 2026-11-06), hitl_dataset.cut_frame, dentro de
+  fix_door y antes del filtro de fragmentos y del descarte: se borra la
+  puerta por encima de la linea de cintura. La linea es una recta ajustada al
+  pixel mas bajo de las ventanas restadas en cada columna, usando solo las
+  columnas cuyo borde esta en o por debajo de su mediana (los lados
+  inclinados de la ventana tienen el pixel mas bajo muy arriba y dejaban un
+  pilar del marco en pie), limitada al rango de esos bordes y aplicada a
+  todas las columnas de la puerta; donde la ventana baja mas que la recta se
+  usa su propio borde. El espejo se resta pero no define el borde.
+  Muestra: models/checkpoints/car_parts/_muestra_hitl_10c/door_sin_marco.jpg
+  (12 puertas al azar de train), door_sin_marco_mayor_recorte.jpg (los 6
+  mayores recortes) y door_sin_marco/ (cada recorte).
+                 puertas  modificadas  descartadas  con marco quitado
+    train        1311     1093         8            1061
+    val          161      140          1            135
+    test         166      151          0            144
+    total        1638     1384         9            1340
+  Area conservada (train): p5 0.53, p25 0.60, mediana 0.63, p75 0.67, p95
+  0.79, minimo 0.46. Marco quitado: mediana 7.5 % del area original, p95
+  14 %. Descartadas: recortes que eran solo el marco de la ventana y
+  primeros planos donde la ventana ocupa casi toda la puerta.
+
+  Verificacion con v2 tras quitar el marco (compare_10c_d):
+                        caja AP   mascara AP
+    door, test HITL     0.296     0.397
+    todo HITL           0.307     0.327
+    door, Roboflow      0.679     0.719
+  door deja de ser un caso aparte en HITL (queda en el promedio de las
+  clases); la distancia con Roboflow es la misma que en todas las clases
+  (cambio de dominio: coches siniestrados, exteriores), no de criterio.
+
+SOLAPES ENTRE LAS 10 CLASES (train, % de instancias de A con mas del 50 % de
+  su area dentro de una instancia de B). Primera matriz
+  (_muestra_solapes_10c/matriz_solapes.md): unico par con diferencia > 20
+  puntos, wheel dentro de wheel, Roboflow 48 %, HITL 0 % (rin y llanta como
+  dos instancias anidadas). Decidido 2026-11-06: el rin de Roboflow
+  (wheel) -> None y tire -> wheel. Recalculada con puerta sin marco y sin
+  rin (matriz_solapes_b.md): ningun par con diferencia > 20 puntos; las
+  mayores son de 4 puntos (trunk dentro de wheel 4/0, light dentro de trunk
+  0/4, mirror dentro de glass 0/3). v2 en wheel: test HITL caja 0.398 ->
+  0.592. Limite del metodo: solo ve solapes, no la extension de una parte.
+  PENDING_DECISIONS de class_map_hitl: vacio.
+
+Duplicados (SIFT + RANSAC, 300 puntos, lado largo 480, consulta tambien
+espejada; 2026-11-06):
+  - Sin copias ni copias aumentadas dentro del dataset: ningun par >= 44
+    puntos (las copias de Carparts-Seg daban ~250). 998 fotos distintas.
+  - Si hay fotos del MISMO VEHICULO desde otro angulo: 17 pares confirmados
+    a ojo (entre los pares de 15 a 43 puntos) -> 982 grupos (14 de 2 fotos,
+    1 de 3). Lista en data/raw/hitl_parts_coco/grupos_mismo_vehiculo.json.
+    Probablemente hay mas por debajo de 15 puntos, que SIFT no distingue de
+    coincidencias casuales.
+  - Contra Roboflow (train/valid/test) y Carparts-Seg (train/val/test): 0
+    coincidencias (maximo 19 puntos). Ninguna imagen queda excluida.
+  Hojas: dup_interno_*.jpg en la carpeta de la muestra; datos en
+  duplicados_sift.json.
+
+Particiones propuestas (data/raw/hitl_parts_coco/splits.json): 80/10/10 por
+grupo de mismo vehiculo, semilla 0 (hitl_dataset.assign_splits).
+  train 802 imagenes (786 grupos), val 98, test 98. Ninguna clase final con
+  menos de 10 instancias en val o test.
+  Instancias train/val/test: bumper 927/110/111, door 1311/161/166,
+  fender 1427/182/181, glass 2465/307/319, grille 459/59/59,
+  hood 568/69/75, light 1319/153/163, mirror 784/102/101,
+  trunk 334/47/35, wheel 1404/171/175.
+
+Mezcla con Roboflow (decidido 2026-11-06): SI, para entrenar car_parts/v3_mix
+  (Roboflow train 327 + HITL train 802, una etapa) frente a car_parts/v3_10c
+  (solo Roboflow train). Ambos eligen la epoca con el val de los dos (32 + 98)
+  por mask AP. Archivos mezclados: python -m src.m2_parts.mix_dataset ->
+  data/raw/parts_mix_coco/. Regla de adopcion y comandos: seccion 8 de
+  docs/m2_m3_reentrenar_modelos.txt.
