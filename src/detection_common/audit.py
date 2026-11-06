@@ -179,6 +179,14 @@ class RunAuditor:
         info.setdefault("started_at", datetime.fromtimestamp(self.start_time).isoformat())
         _write_json_atomic(os.path.join(self.output_dir, RUN_INFO_FILE), info)
 
+    def update_run_info(self, extra: dict) -> None:
+        """Add keys to the ``run_info.json`` already written (e.g. what is only known later)."""
+        path = os.path.join(self.output_dir, RUN_INFO_FILE)
+        with open(path, encoding="utf-8") as f:
+            info = json.load(f)
+        info.update(extra)
+        _write_json_atomic(path, info)
+
     # --------------------------------------------------------------- tracking
     def configure(self, detector: str, select_by: str, n_train_batches: int,
                   n_val_batches: int, optimizer=None, device=None) -> None:

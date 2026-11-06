@@ -105,6 +105,14 @@ def build_arg_parser(cfg) -> argparse.ArgumentParser:
                         help="M1 optical preprocessing applied to the train AND validation "
                              "images before augmentation (default: raw = none). A model trained "
                              "with it must also be fed preprocessed images at inference.")
+    parser.add_argument("--init-from", default=None, metavar="CHECKPOINT",
+                        help="Start from this checkpoint's weights instead of the COCO-pretrained "
+                             "ones (e.g. stage 2 from a stage-1 best_model.pth). Same arch, and "
+                             "the same categories unless --reset-predictors. Optimizer and epoch "
+                             "start fresh: this is initialization, not resuming.")
+    parser.add_argument("--reset-predictors", action="store_true", default=False,
+                        help="With --init-from: keep backbone, FPN, RPN and head trunks, but "
+                             "re-initialize the final box predictor and mask predictor.")
     parser.add_argument("--seed", type=int, default=42,
                         help="Seeds python, numpy and torch (shuffling, augmentation, head "
                              "init). Pass -1 to leave unseeded. cuDNN kernels are still not "
@@ -119,8 +127,47 @@ def seed_everything(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
+PREDICTOR_PREFIXES = ("roi_heads.box_predictor.", "roi_heads.mask_predictor.")
+
+
+def load_initial_weights(model, checkpoint_path: str, arch: str, categories: dict,
+                         reset_predictors: bool = False) -> dict:
+    """Load ``--init-from`` weights into a freshly built ``model``.
+
+    Without ``reset_predictors`` every weight is loaded, so the checkpoint
+    must predict exactly ``categories`` (same ids and names). With it, the
+    box and mask predictors keep the fresh initialization ``build_model``
+    gave them and the class lists may differ.
+
+    Returns:
+        What to record in ``run_info.json`` and the checkpoint.
+    """
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    ckpt_arch = ckpt.get("arch", "faster_rcnn")
+    if ckpt_arch != arch:
+        raise SystemExit(f"--init-from is a {ckpt_arch} checkpoint; this run builds {arch}")
+    ckpt_categories = {int(k): v for k, v in ckpt.get("categories", {}).items()}
+    same_classes = ckpt_categories == {int(k): v for k, v in categories.items()}
+    if not reset_predictors and not same_classes:
+        raise SystemExit("--init-from predicts other classes than this run "
+                         f"({ckpt_categories} vs {categories}); pass --reset-predictors")
+    state = ckpt["model_state_dict"]
+    if reset_predictors:
+        state = {k: v for k, v in state.items() if not k.startswith(PREDICTOR_PREFIXES)}
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if unexpected or any(not k.startswith(PREDICTOR_PREFIXES) for k in missing):
+        raise SystemExit(f"--init-from does not fit the model: missing {missing}, "
+                         f"unexpected {unexpected}")
+    return {"path": checkpoint_path, "reset_predictors": reset_predictors,
+            "reinitialized": sorted(missing), "same_classes": same_classes,
+            "source_epoch": ckpt.get("epoch"), "source_detector": ckpt.get("detector"),
+            "source_val_map": ckpt.get("val_map")}
+
+
 def validate_args(cfg, args) -> None:
     """Fail before loading anything when flags contradict each other."""
+    if getattr(args, "reset_predictors", False) and not getattr(args, "init_from", None):
+        raise SystemExit("--reset-predictors only makes sense with --init-from")
     if args.metric == "coco" and not PYCOCOTOOLS_AVAILABLE:
         raise SystemExit("--metric coco requires pycocotools; install it or pass --metric simple")
     if cfg.with_masks and args.arch != "mask_rcnn":
@@ -154,6 +201,8 @@ def build_checkpoint_payload(model, dataset, cfg, args, epoch, augmented: bool,
         "freeze_bn": args.freeze_bn,
         "augmented": augmented,
         "preprocess": getattr(args, "preprocess", RAW_PREPROCESS),
+        "init_from": getattr(args, "init_from", None),
+        "reset_predictors": getattr(args, "reset_predictors", False),
         "epoch": epoch,
     }
     # Under --metric coco, val_map is AP@0.5:0.95 and val_map50 is AP50 of the
@@ -262,6 +311,12 @@ def run_training(cfg, args) -> float:
     log(f"{'='*80}\n")
 
     model = build_model(train_dataset.num_classes, arch=args.arch, pretrained=True)
+    if args.init_from:
+        init_info = load_initial_weights(model, args.init_from, args.arch,
+                                         train_dataset.categories, args.reset_predictors)
+        auditor.update_run_info({"init_from": init_info})
+        log(f"Init from: {args.init_from} (epoch {init_info['source_epoch']})  |  "
+            f"predictors {'re-initialized' if args.reset_predictors else 'loaded'}")
     model.to(device)
 
     params = [p for p in model.parameters() if p.requires_grad]
