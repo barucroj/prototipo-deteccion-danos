@@ -271,11 +271,15 @@ lista completa. Los flags mas importantes (identicos para todos):
      v3_10c  train = Roboflow train (327 imagenes efectivas)
      v3_mix  train = Roboflow train (327) + HITL train (802), una etapa
    Los dos eligen la epoca con el val de ambos (Roboflow 32 + HITL 98) por
-   mask AP. 12 epocas, a confirmar con la curva (v2 se estanco en val desde la
-   epoca ~6-8).
+   mask AP. Receta (decidida 2026-11-06): 20 epocas, LR 0.005 que baja x0.1
+   en la epoca 15 (--lr-step-size 14), batch 2, AMP, augmentation, semilla 42.
+   Por que: v2 se estanco en val desde la epoca ~6-8 sin bajar el LR, y en
+   damage el salto (~0.45 -> ~0.51) llego al bajar el LR; con 12 epocas v3_10c
+   haria ~2000 iteraciones, menos que las ~3300 de v2. best_model.pth es la
+   mejor epoca en val, asi que las epocas de mas solo cuestan tiempo.
 
-   ESTADO (2026-11-06): no entrenar v3_mix ni v3_10c hasta que el usuario
-   confirme. Criterios alineados con Roboflow (2026-11-06): en HITL se restan
+   ESTADO (2026-11-06): listo para entrenar; lanzar cuando el usuario lo
+   indique. Criterios alineados con Roboflow (2026-11-06): en HITL se restan
    de la puerta su ventana y su espejo (opcion A) y se quita el marco por
    encima de la linea de cintura; en Roboflow el rin (wheel) pasa a None y la
    llanta (tire) es wheel, una instancia por rueda.
@@ -288,9 +292,18 @@ lista completa. Los flags mas importantes (identicos para todos):
    -> data/raw/parts_mix_coco/instances_{train,train_roboflow,val,test}.json
       y resumen.json (imagenes e instancias por fuente y clase).
 
-   Entrenar (cada uno en su carpeta nueva):
-       ./venv_cuda/Scripts/python.exe -m src.m2_parts.train_masks_10c --epochs 12 --batch-size 2 --lr 0.005 --seed 42 --select-by segm --output models/checkpoints/car_parts/v3_10c
-       ./venv_cuda/Scripts/python.exe -m src.m2_parts.train_masks_mix --epochs 12 --batch-size 2 --lr 0.005 --seed 42 --select-by segm --output models/checkpoints/car_parts/v3_mix
+   Entrenar los dos, uno tras otro (abre el monitor de cada uno en otra
+   ventana; se niega si alguna carpeta ya tiene best_model.pth):
+       powershell -ExecutionPolicy Bypass -File scripts\m2_train_parts_10c.ps1
+   Solo uno: -Model 10c o -Model mix. Equivale a:
+       ./venv_cuda/Scripts/python.exe -m src.m2_parts.train_masks_10c --epochs 20 --lr-step-size 14 --batch-size 2 --lr 0.005 --seed 42 --select-by segm --output models/checkpoints/car_parts/v3_10c
+       ./venv_cuda/Scripts/python.exe -m src.m2_parts.train_masks_mix --epochs 20 --lr-step-size 14 --batch-size 2 --lr 0.005 --seed 42 --select-by segm --output models/checkpoints/car_parts/v3_mix
+   Datos que quedan en cada carpeta (para las graficas): metrics.json por
+   epoca (loss y terminos, LR, tiempo, GPU, COCO de caja y mascara y, desde
+   2026-11-06, "per_class": AP, AP50, AP75, AR@100 e instancias por clase),
+   batches.jsonl (una linea por batch de train: epoca, batch, paso global,
+   loss y terminos, LR, segundos), status.json, train.log y run_info.json.
+   Prueba del script: car_parts/smoke_10c_script (2 epocas, 20/10 imagenes).
 
    Instancias por clase final (train / val / test). Roboflow train esta
    inflado x3 (111 fotos x 3 copias):
@@ -347,5 +360,7 @@ lista completa. Los flags mas importantes (identicos para todos):
      val de 130 imagenes ~79 s por epoca (inferencia 75 s + COCOeval);
      pico de GPU 2.84 GB.
    Estimado por epoca: v3_mix 1129 x 0.36 s ~ 6.7 min + 1.3 min de val ~ 8 min
-   -> 12 epocas ~ 1 h 40 min. v3_10c 327 x 0.28 s ~ 1.5 min + 1.3 min ~ 2.9 min
-   -> 12 epocas ~ 35 min.
+   -> 20 epocas ~ 2 h 40 min. v3_10c 327 x 0.28 s ~ 1.5 min + 1.3 min ~ 2.9 min
+   -> 20 epocas ~ 1 h. Prueba corta con los datos finales
+   (car_parts/smoke_mix_hitl_b, 60/30 imagenes, 2 epocas): completa, mask AP
+   0.18 -> 0.32, pico 2.84 GB.

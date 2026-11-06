@@ -361,7 +361,11 @@ Runbook completo: `docs/m2_m3_reentrenar_modelos.txt`.
     `completed`/`interrupted`/`failed` (con traceback).
   - `train.log`: todo lo impreso, con fecha y hora.
   - `metrics.json` por época: loss total y por término, LR, tiempo, pico de GPU, `is_best`,
-    bloque `coco`.
+    bloque `coco` y, desde 2026-11-06, `per_class` (`{bbox|segm: {clase: AP, AP50, AP75, AR_100,
+    instances}}`, de la misma evaluación con `coco_eval.category_stats`; `None` sin GT); el
+    trainer imprime también el AP por clase de cada época.
+  - `batches.jsonl`: una línea por batch de train (época, batch, paso global, loss y términos
+    —`null` si no es finito—, LR, segundos desde el inicio).
 - `watch.py` — `python -m src.detection_common.watch <output_dir> [--interval N] [--once]`:
   muestra época, batch, barras de avance, losses, ETA, mejor época e historial; avisa si
   `status.json` lleva >2 min sin actualizarse o si hay losses NaN/inf.
@@ -412,8 +416,10 @@ descartan partes chicas (manija, emblema, tapa de gasolina) y accesorios (techo,
 estribos, guardafango). **Dos modelos con la misma receta salvo los datos de train**
 (decidido 2026-11-06): `v3_10c` (`train_masks_10c`, solo Roboflow train) y `v3_mix`
 (`train_masks_mix`, Roboflow train 327 + HITL train 802, una etapa). Ambos eligen la época con
-el val de los dos datasets (Roboflow 32 + HITL 98) por mask AP; 12 épocas (a confirmar con la
-curva). Runbook y comandos: sección 8 de `docs/m2_m3_reentrenar_modelos.txt`.
+el val de los dos datasets (Roboflow 32 + HITL 98) por mask AP. Receta (2026-11-06): 20 épocas,
+`--lr-step-size 14`, lr 0.005, batch 2, semilla 42; se lanzan con
+`scripts/m2_train_parts_10c.ps1` (los dos seguidos, monitor en otra ventana). Runbook y
+comandos: sección 8 de `docs/m2_m3_reentrenar_modelos.txt`.
 - **light = solo faros y calaveras** (decidido 2026-11-06, porque HITL no etiqueta faros de
   niebla ni direccionales): `left_fog_light`, `right_fog_lights`, `fog_lights` e
   `indicator_light` → `None` en todos los mapas (y por tanto `fog_light`/`indicator_light` de v2
@@ -475,7 +481,7 @@ curva). Runbook y comandos: sección 8 de `docs/m2_m3_reentrenar_modelos.txt`.
   en el plan actual.
 - Medido (RTX 3050): Roboflow ~0.28 s por imagen de train (60 imágenes, pico 2.2 GB); mezcla
   (`car_parts/smoke_mix_tiempo`, 160 imágenes, 68 % HITL) 0.36 s por imagen, val de 130 imágenes
-  ~79 s, pico 2.84 GB. Estimado con 12 épocas: `v3_10c` ~35 min, `v3_mix` ~1 h 40 min (~8 min/época).
+  ~79 s, pico 2.84 GB. Estimado con 20 épocas: `v3_10c` ~1 h, `v3_mix` ~2 h 40 min (~8 min/época).
 
 ### Dataset HITL "Car parts and car damages" (2026-11-06, se usa en `v3_mix`)
 Humans in the Loop, CC0 1.0 según su página (descargado el 2026-11-06 de una re-subida en Roboflow
@@ -754,7 +760,7 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
 `tests/m2_parts/test_compare_10c.py`, `tests/detection_common/test_final_classes.py` y
 `test_init_from.py`, `tests/m2_parts/test_hitl_dataset.py`, `test_class_map_hitl.py`,
 `test_mix_dataset.py` y `test_decide_mix.py`.
-Resultado al 2026-11-06: 428 pasan.
+Resultado al 2026-11-06: 432 pasan.
 Los `manual_inference.py` de `tests/m2_parts/`, `tests/m3_damage/detector/` y
 `tests/m3_damage/assignment/` son demos con GUI, no se colectan.
 
