@@ -31,6 +31,8 @@ import os
 from dataclasses import replace
 
 from src.m2_parts.class_map import CLASS_MAP
+from src.m2_parts.class_map_10 import CLASS_MAP_CARPARTS_SEG, CLASS_MAP_ROBOFLOW, FINAL_CLASSES
+from src.m2_parts.class_map_hitl import CLASS_MAP_HITL, CLASS_MAP_MIX
 from src.detection_common.config import DetectorConfig
 
 CONFIG = DetectorConfig(
@@ -62,4 +64,83 @@ MASK_CONFIG = replace(
     default_output=os.path.join("models", "checkpoints", "car_parts", "v2"),
     default_select_by="segm",
     class_map=CLASS_MAP,
+)
+
+#: Roboflow on the ten classes of :data:`src.m2_parts.class_map_10.CLASS_MAP_ROBOFLOW`.
+#: For evaluation (``compare_10c --dataset roboflow``); training goes through
+#: the mixed files (:data:`MASK_10_CONFIG`, :data:`MASK_MIX_CONFIG`).
+ROBOFLOW_10_CONFIG = replace(
+    MASK_CONFIG,
+    description="Roboflow car parts on the 10 final classes (evaluation)",
+    default_output="",
+    class_map=CLASS_MAP_ROBOFLOW,
+    final_classes=FINAL_CLASSES,
+)
+
+#: Humans in the Loop part images (``hitl_dataset`` output) on the ten classes.
+#: For evaluation (``compare_10c --dataset hitl``).
+HITL_10_CONFIG = replace(
+    ROBOFLOW_10_CONFIG,
+    description="Humans in the Loop car parts on the 10 final classes (evaluation)",
+    data_root=os.path.join("data", "raw"),
+    splits={split: (os.path.join("Car parts and car damages dataset", "Car damages dataset", "File1", "img"),
+                    os.path.join("hitl_parts_coco", f"instances_{split}.json"))
+            for split in ("train", "val", "test")},
+    val_split="val",
+    exclude_category_ids=frozenset(),
+    class_map=CLASS_MAP_HITL,
+)
+
+#: Roboflow + HITL merged by :mod:`src.m2_parts.mix_dataset` (file names
+#: relative to ``data/raw``, categories ``roboflow/<name>`` and ``hitl/<name>``).
+#: Splits: ``train`` (both), ``train_roboflow`` (Roboflow only), ``val`` and
+#: ``test`` (both).
+MIX_10_DATA = replace(
+    ROBOFLOW_10_CONFIG,
+    description="Roboflow + HITL car parts on the 10 final classes",
+    data_root=os.path.join("data", "raw"),
+    splits={split: ("", os.path.join("parts_mix_coco", f"instances_{split}.json"))
+            for split in ("train", "train_roboflow", "val", "test")},
+    val_split="val",
+    exclude_category_ids=frozenset(),
+    class_map=CLASS_MAP_MIX,
+)
+
+#: ``car_parts/v3_10c``: trained on Roboflow train only; the epoch is chosen on
+#: the val of **both** datasets (Roboflow 32 + HITL 98), like ``v3_mix``, so the
+#: two runs differ only in the training images. Train with
+#: ``python -m src.m2_parts.train_masks_10c``.
+MASK_10_CONFIG = replace(
+    MIX_10_DATA,
+    description="car-parts instance segmentation, 10 classes, Roboflow train (val: Roboflow + HITL)",
+    train_split="train_roboflow",
+    default_output=os.path.join("models", "checkpoints", "car_parts", "v3_10c"),
+)
+
+#: ``car_parts/v3_mix``: Roboflow train (327) + HITL train (802) in one stage,
+#: same val and recipe as ``v3_10c``. Train with ``python -m src.m2_parts.train_masks_mix``.
+MASK_MIX_CONFIG = replace(
+    MIX_10_DATA,
+    description="car-parts instance segmentation, 10 classes, Roboflow + HITL train (val: both)",
+    train_split="train",
+    default_output=os.path.join("models", "checkpoints", "car_parts", "v3_mix"),
+)
+
+#: Ultralytics Carparts-Seg (``ndjson_a_coco.py`` output) on the same ten ids,
+#: **only for the external test** of ``compare_10c --dataset carparts_seg``; it is
+#: not used for training (decided 2026-11-06): its val/test are augmented copies
+#: of its train photos, and door/glass/fog lights follow another labeling
+#: criterion. It labels neither fender nor grille, so ``final_classes`` forces
+#: the ten ids. Category ids are the ndjson index + 1, so nothing is excluded.
+CARPARTS_SEG_10_CONFIG = replace(
+    ROBOFLOW_10_CONFIG,
+    description="Carparts-Seg on the 10 final classes (external test only, not for training)",
+    data_root=os.path.join("data", "raw", "carparts_seg"),
+    splits={split: (os.path.join("images", split),
+                    os.path.join("annotations", f"instances_{split}.json"))
+            for split in ("train", "val", "test")},
+    val_split="val",
+    exclude_category_ids=frozenset(),
+    default_output="",
+    class_map=CLASS_MAP_CARPARTS_SEG,
 )

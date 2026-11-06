@@ -252,3 +252,115 @@ lista completa. Los flags mas importantes (identicos para todos):
    src/detection_common/coco_eval.py    evaluacion COCO estandar.
    src/detection_common/engine.py       metrica casera, solo de respaldo
                                         (--metric simple). NO comparable.
+
+
+8) PARTES EN 10 CLASES (car_parts/v3_10c y car_parts/v3_mix)
+   ---------------------------------------------------------------
+   Clases: bumper, door, fender, glass, grille, hood, light, mirror, trunk,
+   wheel (ids 1..10 en orden alfabetico). Mapas: CLASS_MAP_ROBOFLOW
+   (src/m2_parts/class_map_10.py), CLASS_MAP_HITL y CLASS_MAP_MIX
+   (src/m2_parts/class_map_hitl.py).
+
+   light = solo faros y calaveras (decidido 2026-11-06): HITL no etiqueta
+   faros de niebla ni direccionales, asi que en Roboflow left_fog_light,
+   right_fog_lights, fog_lights, indicator_light y back_light (reflejante o
+   medallon, no calavera) pasan a None; en v2 mapeado, fog_light e
+   indicator_light tambien (predicciones y anotaciones).
+
+   Dos modelos, misma receta salvo los datos de train (decidido 2026-11-06):
+     v3_10c  train = Roboflow train (327 imagenes efectivas)
+     v3_mix  train = Roboflow train (327) + HITL train (802), una etapa
+   Los dos eligen la epoca con el val de ambos (Roboflow 32 + HITL 98) por
+   mask AP. Receta (decidida 2026-11-06): 20 epocas, LR 0.005 que baja x0.1
+   en la epoca 15 (--lr-step-size 14), batch 2, AMP, augmentation, semilla 42.
+   Por que: v2 se estanco en val desde la epoca ~6-8 sin bajar el LR, y en
+   damage el salto (~0.45 -> ~0.51) llego al bajar el LR; con 12 epocas v3_10c
+   haria ~2000 iteraciones, menos que las ~3300 de v2. best_model.pth es la
+   mejor epoca en val, asi que las epocas de mas solo cuestan tiempo.
+
+   ESTADO (2026-11-06): listo para entrenar; lanzar cuando el usuario lo
+   indique. Criterios alineados con Roboflow (2026-11-06): en HITL se restan
+   de la puerta su ventana y su espejo (opcion A) y se quita el marco por
+   encima de la linea de cintura; en Roboflow el rin (wheel) pasa a None y la
+   llanta (tire) es wheel, una instancia por rueda.
+   class_map_hitl.PENDING_DECISIONS esta vacio. Detalle en
+   docs/dataset_hitl_partes.txt.
+
+   Paso previo (una vez; vuelve a escribir los JSON si cambian los mapas o
+   las particiones de HITL):
+       ./venv_cuda/Scripts/python.exe -m src.m2_parts.mix_dataset
+   -> data/raw/parts_mix_coco/instances_{train,train_roboflow,val,test}.json
+      y resumen.json (imagenes e instancias por fuente y clase).
+
+   Entrenar los dos, uno tras otro (abre el monitor de cada uno en otra
+   ventana; se niega si alguna carpeta ya tiene best_model.pth):
+       powershell -ExecutionPolicy Bypass -File scripts\m2_train_parts_10c.ps1
+   Solo uno: -Model 10c o -Model mix. Equivale a:
+       ./venv_cuda/Scripts/python.exe -m src.m2_parts.train_masks_10c --epochs 20 --lr-step-size 14 --batch-size 2 --lr 0.005 --seed 42 --select-by segm --output models/checkpoints/car_parts/v3_10c
+       ./venv_cuda/Scripts/python.exe -m src.m2_parts.train_masks_mix --epochs 20 --lr-step-size 14 --batch-size 2 --lr 0.005 --seed 42 --select-by segm --output models/checkpoints/car_parts/v3_mix
+   Datos que quedan en cada carpeta (para las graficas): metrics.json por
+   epoca (loss y terminos, LR, tiempo, GPU, COCO de caja y mascara y, desde
+   2026-11-06, "per_class": AP, AP50, AP75, AR@100 e instancias por clase),
+   batches.jsonl (una linea por batch de train: epoca, batch, paso global,
+   loss y terminos, LR, segundos), status.json, train.log y run_info.json.
+   Prueba del script: car_parts/smoke_10c_script (2 epocas, 20/10 imagenes).
+
+   Instancias por clase final (train / val / test). Roboflow train esta
+   inflado x3 (111 fotos x 3 copias):
+                 Roboflow          HITL              test conjunto
+     bumper      321 / 33 / 18     927 / 110 / 111   129
+     door        603 / 62 / 31     1307 / 161 / 166  197
+     fender      618 / 62 / 33     1427 / 182 / 181  214
+     glass       1200 / 116 / 58   2465 / 307 / 319  377
+     grille      354 / 31 / 16     459 / 59 / 59     75
+     hood        189 / 17 / 9*     568 / 69 / 75     84
+     light       615 / 61 / 31     1319 / 153 / 163  194
+     mirror      447 / 48 / 21     784 / 102 / 101   122
+     trunk       156 / 16 / 7*     334 / 47 / 35     42
+     wheel       1506 / 148 / 71   1404 / 171 / 175  246
+   (* menos de 10: poco fiable en el test de Roboflow.) Con el cambio de
+   light, Roboflow light paso de 969/94/43 a 615/61/31; ninguna imagen queda
+   vacia.
+
+   Evaluacion: mismas imagenes y clases para todos; v2 mapeado como
+   referencia historica. Tres pruebas, con --reference v3_10c:
+       ./venv_cuda/Scripts/python.exe -m src.m2_parts.compare_10c --model v3_10c=models/checkpoints/car_parts/v3_10c/best_model.pth --model v3_mix=models/checkpoints/car_parts/v3_mix/best_model.pth --model v2=models/checkpoints/car_parts/v2/best_model.pth --reference v3_10c --dataset roboflow --output models/checkpoints/car_parts/v3_mix/compare_10c
+   (igual con --dataset hitl y --dataset mix). Cada uno da AP de caja y
+   mascara con IC, AP por clase con instancias, y la diferencia contra
+   v3_10c con bootstrap pareado por imagen (1000, semilla 0, IC 95 %).
+   hitl y mix advierten que el test de HITL puede ser optimista (fotos del
+   mismo vehiculo por debajo de 15 puntos SIFT).
+
+   Regla de adopcion (src/m2_parts/decide_mix.py; actualizada 2026-11-06):
+       ./venv_cuda/Scripts/python.exe -m src.m2_parts.decide_mix --roboflow models/checkpoints/car_parts/v3_mix/compare_10c/compare_10c_roboflow_test.json --hitl models/checkpoints/car_parts/v3_mix/compare_10c/compare_10c_hitl_test.json
+   Se adopta v3_mix si, en mask AP, el IC de v3_mix - v3_10c en el test de
+   Roboflow no queda por debajo de cero (no inferioridad: con 16 imagenes un
+   IC que cruza cero NO es mejora). El test de HITL (IC por encima de cero)
+   solo cuenta con --hitl-aligned, es decir, cuando la verificacion de door
+   muestre el criterio alineado y no queden diferencias de solape sin
+   resolver; mientras tanto se reporta aparte. La caja se reporta sin decidir.
+
+   Carparts-Seg NO se usa para entrenar (decidido 2026-11-06): su val y su
+   test son copias aumentadas de fotos de su train (SIFT + RANSAC: 392 de 401
+   en val y 264 de 276 en test), tiene 579 fotos base y otro criterio de
+   etiqueta (la puerta incluye su ventana, cristales laterales sin etiqueta,
+   sin faros de niebla, ruedas unidas en un solo poligono). Sin fuga hacia el
+   val/test de Roboflow. Prueba externa (no elige modelo), solo light,
+   bumper, hood, wheel, mirror y trunk:
+       ./venv_cuda/Scripts/python.exe -m src.m2_parts.compare_10c --model v3=models/checkpoints/car_parts/v3_10c/best_model.pth --dataset carparts_seg --output models/checkpoints/car_parts/v3_10c/compare_10c
+
+   Arrancar desde otro checkpoint (opcion del trainer, hecha y probada, sin
+   uso en el plan actual): --init-from CKPT carga los pesos (no reanuda); sin
+   --reset-predictors exige las mismas clases, con el reinicia solo
+   roi_heads.box_predictor y roi_heads.mask_predictor.
+
+   Tiempo medido (RTX 3050, 2026-11-06, car_parts/smoke_mix_tiempo: v3_mix,
+   1 epoca, --max-train-images 160 = 108 HITL + 52 Roboflow, val completo):
+     train 57 s / 160 imagenes = 0.36 s por imagen (Roboflow solo: ~0.28);
+     val de 130 imagenes ~79 s por epoca (inferencia 75 s + COCOeval);
+     pico de GPU 2.84 GB.
+   Estimado por epoca: v3_mix 1129 x 0.36 s ~ 6.7 min + 1.3 min de val ~ 8 min
+   -> 20 epocas ~ 2 h 40 min. v3_10c 327 x 0.28 s ~ 1.5 min + 1.3 min ~ 2.9 min
+   -> 20 epocas ~ 1 h. Prueba corta con los datos finales
+   (car_parts/smoke_mix_hitl_b, 60/30 imagenes, 2 epocas): completa, mask AP
+   0.18 -> 0.32, pico 2.84 GB.

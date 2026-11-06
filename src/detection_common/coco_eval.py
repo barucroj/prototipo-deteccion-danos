@@ -113,9 +113,45 @@ def collect_detections(model, data_loader, device, with_masks: bool = False,
     return detections
 
 
+def category_stats(coco_eval) -> dict:
+    """Per-category AP, AP50, AP75, AR@100 and GT instances of an accumulated ``COCOeval``.
+
+    Same definitions as the summary (all areas; ``maxDets`` 100). A category
+    without ground truth in the evaluated images gets ``None`` for every
+    metric, so it stays in the record instead of vanishing.
+
+    Returns:
+        ``{category_name: {"AP", "AP50", "AP75", "AR_100", "instances"}}``.
+    """
+    params = coco_eval.params
+    precision = coco_eval.eval["precision"]  # (iou, recall, category, area, max_dets)
+    recall = coco_eval.eval["recall"]        # (iou, category, area, max_dets)
+    iou = np.asarray(params.iouThrs)
+    img_ids = set(params.imgIds)
+    out = {}
+    for index, category_id in enumerate(params.catIds):
+        name = coco_eval.cocoGt.cats[category_id]["name"]
+        instances = sum(1 for a in coco_eval.cocoGt.anns.values()
+                        if a["category_id"] == category_id and a["image_id"] in img_ids
+                        and not a.get("iscrowd", 0))
+
+        def mean(values):
+            values = values[values > -1]
+            return float(np.mean(values)) if values.size else None
+
+        out[name] = {
+            "AP": mean(precision[:, :, index, 0, -1]),
+            "AP50": mean(precision[np.isclose(iou, 0.5), :, index, 0, -1]),
+            "AP75": mean(precision[np.isclose(iou, 0.75), :, index, 0, -1]),
+            "AR_100": mean(recall[:, index, 0, -1]),
+            "instances": instances,
+        }
+    return out
+
+
 def evaluate_coco(model, data_loader, device, ann_json_path: str,
                   image_ids=None, with_masks: bool = False, verbose: bool = True,
-                  on_batch=None):
+                  on_batch=None, per_class: dict = None):
     """Standard COCO AP for one split.
 
     Args:
@@ -127,6 +163,9 @@ def evaluate_coco(model, data_loader, device, ann_json_path: str,
         with_masks: Also compute ``segm`` AP.
         on_batch: Optional per-batch progress callback, see
             :func:`collect_detections`.
+        per_class: Optional dict filled with ``{iou_type:``
+            :func:`category_stats` ``}`` from the same evaluation (no
+            extra inference).
 
     Returns:
         ``{iou_type: {stat_name: value}}``, e.g.
@@ -163,6 +202,8 @@ def evaluate_coco(model, data_loader, device, ann_json_path: str,
         results[iou_type] = {
             name: float(coco_eval.stats[i]) for i, name in enumerate(STAT_NAMES)
         }
+        if per_class is not None:
+            per_class[iou_type] = category_stats(coco_eval)
         if verbose:
             print(f"\n  --- COCO {iou_type} ---")
             print(buffer.getvalue().rstrip())

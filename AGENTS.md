@@ -361,7 +361,11 @@ Runbook completo: `docs/m2_m3_reentrenar_modelos.txt`.
     `completed`/`interrupted`/`failed` (con traceback).
   - `train.log`: todo lo impreso, con fecha y hora.
   - `metrics.json` por época: loss total y por término, LR, tiempo, pico de GPU, `is_best`,
-    bloque `coco`.
+    bloque `coco` y, desde 2026-11-06, `per_class` (`{bbox|segm: {clase: AP, AP50, AP75, AR_100,
+    instances}}`, de la misma evaluación con `coco_eval.category_stats`; `None` sin GT); el
+    trainer imprime también el AP por clase de cada época.
+  - `batches.jsonl`: una línea por batch de train (época, batch, paso global, loss y términos
+    —`null` si no es finito—, LR, segundos desde el inicio).
 - `watch.py` — `python -m src.detection_common.watch <output_dir> [--interval N] [--once]`:
   muestra época, batch, barras de avance, losses, ETA, mejor época e historial; avisa si
   `status.json` lleva >2 min sin actualizarse o si hay losses NaN/inf.
@@ -404,6 +408,116 @@ sin `class_map`) se conserva para reproducir v1. `MASK_CONFIG` (v2): `with_masks
   lo advierte. Reimplementa `COCOeval.accumulate` con pesos por imagen porque
   `COCOeval.evaluate` elimina `imgIds` repetidos; las pruebas verifican igualdad exacta con
   pycocotools (bbox y segm). Probado con v1 contra sí mismo en test: diferencia B = 0 exacta.
+
+### `car_parts/v3_10c` y `car_parts/v3_mix` — partes en 10 clases (2026-11-06, sin entrenar)
+Clases: bumper, door, fender, glass, grille, hood, light, mirror, trunk, wheel (ids 1..10 en
+orden alfabético). Se fusionan izq./der., delantera/trasera y todos los cristales y luces; se
+descartan partes chicas (manija, emblema, tapa de gasolina) y accesorios (techo, canastilla,
+estribos, guardafango). **Dos modelos con la misma receta salvo los datos de train**
+(decidido 2026-11-06): `v3_10c` (`train_masks_10c`, solo Roboflow train) y `v3_mix`
+(`train_masks_mix`, Roboflow train 327 + HITL train 802, una etapa). Ambos eligen la época con
+el val de los dos datasets (Roboflow 32 + HITL 98) por mask AP. Receta (2026-11-06): 20 épocas,
+`--lr-step-size 14`, lr 0.005, batch 2, semilla 42; se lanzan con
+`scripts/m2_train_parts_10c.ps1` (los dos seguidos, monitor en otra ventana). Runbook y
+comandos: sección 8 de `docs/m2_m3_reentrenar_modelos.txt`.
+- **light = solo faros y calaveras** (decidido 2026-11-06, porque HITL no etiqueta faros de
+  niebla ni direccionales): `left_fog_light`, `right_fog_lights`, `fog_lights` e
+  `indicator_light` → `None` en todos los mapas (y por tanto `fog_light`/`indicator_light` de v2
+  en `MAP_V2_TO_10`). `back_light` → `None`: la muestra muestra un reflejante de la defensa o el
+  medallón, no una calavera.
+- `mix_dataset.py`: `python -m src.m2_parts.mix_dataset` escribe `data/raw/parts_mix_coco/`
+  (`train`, `train_roboflow`, `val`, `test`), categorías `roboflow/<nombre>` y `hitl/<nombre>`
+  con `CLASS_MAP_MIX` (en `class_map_hitl.py`), `file_name` relativo a `data/raw`, orden de
+  imágenes barajado con semilla 0 (para que `--max-train-images` tome ambas fuentes).
+  Configs: `MASK_10_CONFIG` (train `train_roboflow`), `MASK_MIX_CONFIG` (train `train`);
+  para evaluar, `ROBOFLOW_10_CONFIG`, `HITL_10_CONFIG` y `MIX_10_DATA`.
+- **Regla de adopción** (`decide_mix.py`, sobre los reportes de `compare_10c` en test con
+  referencia `v3_10c`): se adopta `v3_mix` si en mask AP el IC 95 % de la diferencia en el test
+  de Roboflow no queda por debajo de cero (solo no inferioridad). El test de HITL (IC por encima
+  de cero) solo cuenta con `--hitl-aligned`, cuando el criterio esté alineado; mientras, se
+  reporta aparte. La caja se reporta sin decidir. **No entrenar hasta que el usuario confirme.**
+- `class_map_10.py`: `CLASS_MAP_ROBOFLOW` (47 originales; decisiones aplicadas el 2026-11-06 con
+  la muestra `car_parts/_muestra_clases_10c`: `windshield` = limpiaparabrisas → `None`,
+  `front_mirror` → `None`, luces como arriba), `CLASS_MAP_CARPARTS_SEG` (23, solo prueba
+  externa) y `MAP_V2_TO_10` (29 clases de v2 → 10, derivado con `compose_maps`).
+- **Rueda** (decidido 2026-11-06): wheel = rueda completa, **una instancia por rueda**. En Roboflow
+  `wheel` es el rin y `tire` la rueda completa (615 de 624 rines de train dentro de una llanta;
+  el rin ocupa ~1/3 de la caja); para igualar a HITL el rin (`wheel`) → `None` y `tire` → wheel
+  (también en `MAP_V2_TO_10`: el `wheel` de v2 se descarta). v2 en wheel: test de Roboflow caja
+  0.714 → 0.712 (71 → 41 instancias), test de HITL caja 0.398 → 0.592 (sus rines ya no son falsos
+  positivos).
+- `final_classes` en `DetectorConfig` / `final_categories()` / `apply_class_map()` fuerza los ids
+  aunque el dataset no tenga ejemplos de alguna clase.
+- Instancias por clase final (train inflado ×3 / val / test) en Roboflow: bumper 321/33/18,
+  door 603/62/31, fender 618/62/33, glass 1200/116/58, grille 354/31/16, hood 189/17/**9**,
+  light 615/61/31, mirror 447/48/21, trunk 156/16/**7**, wheel (solo `tire`) 882/86/41 (hood y trunk
+  poco fiables en el test de Roboflow; en el test conjunto con HITL, hood 84 y trunk 42).
+- **Carparts-Seg no se usa para entrenar** (decidido 2026-11-06). `data/raw/carparts_seg`
+  (de `ndjson_a_coco.py`, 640×640), 3,156/401/276 imágenes de **579 fotos base**. **Val y test
+  son copias aumentadas de fotos de train**: con SIFT + RANSAC, 392 de 401 de val y 264 de 276 de
+  test son la misma foto que una de train (rotada, volteada, recortada; mediana ~250 puntos);
+  el hash de imagen no lo detectaba. **Sin fuga hacia el val/test de Roboflow** (las
+  coincidencias más altas, ≤ 76 puntos, son falsos positivos por textura). Criterio distinto:
+  la puerta incluye su ventana, los cristales laterales no se etiquetan, no hay faros de
+  niebla, no hay fender ni grille, y 35 de 115 ruedas del test vienen unidas en un solo
+  polígono. Muestras y hojas en `car_parts/_muestra_carparts_seg_10c/`.
+- `CARPARTS_SEG_10_CONFIG`: mismos ids, solo para la prueba externa.
+- `compare_10c.py`: `--model NOMBRE=CKPT` repetible, `--reference` (default el primero),
+  `--dataset roboflow|hitl|mix|carparts_seg` (`hitl` y `mix` advierten que el test de HITL puede
+  ser optimista: SIFT no distingue el mismo coche por debajo de 15 puntos). AP/AP50 de caja y máscara con IC, AP por clase con
+  instancias e IC, grupos, diferencias contra la referencia con bootstrap pareado por imagen y
+  veredicto (mejora/empeora solo si el IC excluye cero), y v2 en sus 29 clases como dato
+  histórico. v2 contra sí mismo (`car_parts/v2/compare_10c/`, con el mapa de luces anterior):
+  diferencia 0 exacta; en 29 clases reproduce 0.6041 / 0.5779. Con light = faros y calaveras:
+  `car_parts/v2/compare_10c_b/`: test de Roboflow caja 0.680 [0.618, 0.764], máscara 0.666
+  [0.598, 0.751]; HITL caja 0.262, máscara 0.272 (door 0.04/0.06: el GT de HITL incluye la
+  ventana); ambos 0.335 / 0.341.
+  - **Prueba externa** (`--dataset carparts_seg`): solo light, bumper, hood, wheel, mirror, trunk
+    (no door ni glass); advierte que el IC es optimista y que no elige modelo. v2 mapeado (268
+    imágenes): caja 0.217 [0.193, 0.255], máscara 0.223 [0.193, 0.265]; por clase (caja) bumper
+    0.244, hood 0.323, light 0.168, mirror 0.302, trunk 0.217 [0.111, 0.367] (26), wheel 0.050
+    (no interpretable: GT con ruedas unidas y rin/llanta).
+- `trainer --init-from CKPT [--reset-predictors]`: hecho y probado (`test_init_from.py`), sin uso
+  en el plan actual.
+- Medido (RTX 3050): Roboflow ~0.28 s por imagen de train (60 imágenes, pico 2.2 GB); mezcla
+  (`car_parts/smoke_mix_tiempo`, 160 imágenes, 68 % HITL) 0.36 s por imagen, val de 130 imágenes
+  ~79 s, pico 2.84 GB. Estimado con 20 épocas: `v3_10c` ~1 h, `v3_mix` ~2 h 40 min (~8 min/época).
+
+### Dataset HITL "Car parts and car damages" (2026-11-06, se usa en `v3_mix`)
+Humans in the Loop, CC0 1.0 según su página (descargado el 2026-11-06 de una re-subida en Roboflow
+Universe cuya licencia no se revisó; URL pendiente de confirmar);
+detalle completo en `docs/dataset_hitl_partes.txt`. **Las carpetas
+vienen invertidas**: las 998 imágenes de partes están en `Car damages dataset/`. Formato
+Supervisely (polígonos con huecos: 140, casi todos puertas con la ventana como hueco); imágenes
+de 562-916 px de lado largo; coches siniestrados en vista 3/4. 441 de las 998 también están en
+el conjunto de daños.
+- `hitl_dataset.py`: conversor a COCO (huecos → varias piezas sin hueco, IoU ≥ 0.957 contra la
+  máscara exacta), `assign_splits()` por grupo y CLI. `class_map_hitl.py`: 21 clases → las 10
+  (ids iguales a Roboflow); descarta License-plate, Roof y Rocker-panel.
+- Criterio: en las etiquetas originales **la puerta incluye su ventana y el espejo** (hallado el
+  2026-11-06 midiendo solapes: 1069 de 1244 puertas de train contienen una ventana, en Roboflow 12
+  de 585). **Opción A aplicada** en la conversión (`fix_door`): se restan ventanas y espejos con
+  >50 % dentro de la puerta, fragmentos <5 % fuera, puerta descartada si conserva <40 %.
+  **Marco de la ventana quitado** (decidido 2026-11-06, `cut_frame`): se borra la puerta por
+  encima de la línea de cintura = recta ajustada al borde inferior de las ventanas restadas
+  (solo columnas con borde en o bajo su mediana, para que los lados inclinados no dejen un pilar),
+  limitada al rango de esos bordes y aplicada a todas las columnas; el espejo no define el borde.
+  Resultado: 1384 de 1638 puertas modificadas, 9 descartadas (recortes que eran solo marco o
+  primeros planos con la ventana casi entera), área conservada mediana 0.63 (marco quitado
+  mediana 7.5 % del área original). Muestra: `car_parts/_muestra_hitl_10c/door_sin_marco*.jpg`.
+  v2 en door del test de HITL (antes → opción A → sin marco): caja 0.037 → 0.038 → **0.296**,
+  máscara 0.059 → 0.292 → **0.397** (Roboflow 0.679 / 0.719). Sigue debajo de Roboflow, pero ya
+  al nivel del resto de HITL (v2 en todo HITL: caja 0.307, máscara 0.327): lo que queda es cambio
+  de dominio, no criterio. Matriz de solapes recalculada
+  (`car_parts/_muestra_solapes_10c/matriz_solapes_b.md`): **ningún par con diferencia > 20
+  puntos** (máx. 4). `class_map_hitl.PENDING_DECISIONS` vacío. Ventanas
+  laterales etiquetadas aparte;
+  Quarter-panel = `back_fender`; wheel = rueda completa; light = Headlight + Tail-light (no
+  etiqueta faros de niebla ni direccionales; por eso se quitaron de Roboflow).
+- Duplicados (SIFT): sin copias internas ni contra Roboflow/Carparts-Seg (máx. 19 puntos); 17
+  pares de mismo vehículo desde otro ángulo → 982 grupos (probablemente hay más no detectados).
+- Particiones (`data/raw/hitl_parts_coco/`): 80/10/10 por grupo, semilla 0 → 802/98/98
+  imágenes; ninguna clase con menos de 10 instancias en val o test.
 
 ### `m3_damage/detector/` — M3 (solo el detector)
 Dataset #1 (CarDD), 7 clases. Mask R-CNN porque un rayón es largo, delgado y diagonal: su caja
@@ -642,7 +756,11 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
 `test_classify_damages.py`, `test_report.py`, `test_render.py`, `test_view_check.py`),
 `tests/pipeline/test_orchestrator.py`, `tests/app/` (`test_view.py`, `test_evaluation_view.py`) y
 `tests/evaluation/` (`test_ground_truth.py`, `test_metrics.py`, `test_evaluation_report.py`,
-`test_run.py`, `test_sweep.py`). Resultado al 2026-11-04: 347 pasan.
+`test_run.py`, `test_sweep.py`), más `tests/m2_parts/test_class_map_10.py`,
+`tests/m2_parts/test_compare_10c.py`, `tests/detection_common/test_final_classes.py` y
+`test_init_from.py`, `tests/m2_parts/test_hitl_dataset.py`, `test_class_map_hitl.py`,
+`test_mix_dataset.py` y `test_decide_mix.py`.
+Resultado al 2026-11-06: 432 pasan.
 Los `manual_inference.py` de `tests/m2_parts/`, `tests/m3_damage/detector/` y
 `tests/m3_damage/assignment/` son demos con GUI, no se colectan.
 

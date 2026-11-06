@@ -215,3 +215,26 @@ def test_completed_run_reports_full_progress(run, tmp_path):
     assert status["state"] == "completed"
     assert status["epoch_progress"] == 1.0
     assert status["overall_progress"] == 1.0
+
+
+def test_every_training_batch_is_logged_but_not_eval(run, tmp_path):
+    from src.detection_common.audit import BATCHES_FILE
+
+    auditor, clock = run
+    for epoch in (1, 2):
+        auditor.start_epoch(epoch, will_eval=True)
+        auditor.start_phase("train", 3)
+        for i in range(3):
+            clock.advance(1.0)
+            auditor.on_batch(i, 0.5 + i, {"loss_mask": 0.2})
+        auditor.on_batch(2, float("nan"), {"loss_mask": float("inf")}) if epoch == 2 else None
+        auditor.start_phase("eval", 2)
+        for i in range(2):
+            auditor.on_batch(i)  # evaluation batches carry no loss
+    rows = [json.loads(line) for line in open(tmp_path / BATCHES_FILE, encoding="utf-8")]
+    assert len(rows) == 7
+    assert [r["step"] for r in rows] == list(range(1, 8))
+    assert [(r["epoch"], r["batch"]) for r in rows[:4]] == [(1, 1), (1, 2), (1, 3), (2, 1)]
+    assert rows[1]["loss"] == 1.5 and rows[1]["loss_components"] == {"loss_mask": 0.2}
+    assert rows[-1]["loss"] is None and rows[-1]["loss_components"] == {"loss_mask": None}
+    assert rows[0]["time_s"] == 1.0 and rows[0]["lr"] is None

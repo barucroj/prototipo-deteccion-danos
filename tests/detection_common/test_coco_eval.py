@@ -129,3 +129,56 @@ def test_segm_evaluation_does_not_mutate_the_dataset_ground_truth(tmp_path):
         assert isinstance(ds.samples[0][4][0]["segmentation"], list)
         _, target = ds[0]
         assert target["masks"].shape == (1, 20, 20)
+
+
+def _two_class_gt():
+    return {
+        "images": [{"id": 1, "width": 100, "height": 100}, {"id": 2, "width": 100, "height": 100}],
+        "categories": [{"id": 1, "name": "door"}, {"id": 2, "name": "hood"}, {"id": 3, "name": "trunk"}],
+        "annotations": [
+            {"id": 1, "image_id": 1, "category_id": 1, "bbox": [10, 10, 30, 30], "area": 900, "iscrowd": 0},
+            {"id": 2, "image_id": 2, "category_id": 1, "bbox": [50, 50, 30, 30], "area": 900, "iscrowd": 0},
+            {"id": 3, "image_id": 1, "category_id": 2, "bbox": [60, 10, 30, 20], "area": 600, "iscrowd": 0},
+        ],
+    }
+
+
+def test_category_stats_per_class_with_missing_class():
+    import contextlib
+    import io
+
+    from pycocotools.cocoeval import COCOeval
+
+    gt = coco_eval.load_coco_gt(_two_class_gt())
+    dets = [{"image_id": 1, "category_id": 1, "bbox": [10, 10, 30, 30], "score": 0.9},  # door found
+            {"image_id": 1, "category_id": 2, "bbox": [0, 70, 20, 20], "score": 0.8}]   # hood missed
+    with contextlib.redirect_stdout(io.StringIO()):
+        ev = COCOeval(gt, gt.loadRes(dets), "bbox")
+        ev.evaluate()
+        ev.accumulate()
+    stats = coco_eval.category_stats(ev)
+    assert set(stats) == {"door", "hood", "trunk"}
+    assert stats["door"]["instances"] == 2 and stats["door"]["AR_100"] == pytest.approx(0.5)
+    assert 0 < stats["door"]["AP"] <= 0.51 and stats["door"]["AP50"] == pytest.approx(stats["door"]["AP"])
+    assert stats["hood"] == {"AP": 0.0, "AP50": 0.0, "AP75": 0.0, "AR_100": 0.0, "instances": 1}
+    assert stats["trunk"] == {"AP": None, "AP50": None, "AP75": None, "AR_100": None, "instances": 0}
+
+
+def test_evaluate_coco_fills_per_class_from_the_same_evaluation(monkeypatch):
+    dets = [{"image_id": i, "category_id": 1, "bbox": b, "score": 0.9}
+            for i, b in ((1, [10, 10, 30, 30]), (2, [50, 50, 30, 30]))]
+    monkeypatch.setattr(coco_eval, "collect_detections", lambda *a, **k: dets)
+    per_class = {}
+    result = coco_eval.evaluate_coco(None, None, None, _two_class_gt(), verbose=False, per_class=per_class)
+    assert set(per_class) == {"bbox"}
+    assert per_class["bbox"]["door"]["AP"] == pytest.approx(1.0)
+    assert per_class["bbox"]["hood"]["AP"] == 0.0
+    # The summary AP is the mean over classes with ground truth.
+    assert result["bbox"]["AP"] == pytest.approx(0.5)
+
+
+def test_format_per_class_marks_classes_without_ground_truth():
+    from src.detection_common.trainer import format_per_class
+
+    text = format_per_class({"hood": {"AP": 0.25}, "door": {"AP": 0.6123}, "trunk": {"AP": None}})
+    assert text == "door 0.612  hood 0.250  trunk -"

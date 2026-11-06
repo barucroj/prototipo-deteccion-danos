@@ -36,6 +36,8 @@ import torch
 STATUS_FILE = "status.json"
 RUN_INFO_FILE = "run_info.json"
 LOG_FILE = "train.log"
+#: One JSON line per training batch: epoch, batch, global step, loss and its terms, LR, time.
+BATCHES_FILE = "batches.jsonl"
 
 
 def format_duration(seconds) -> str:
@@ -137,6 +139,8 @@ class RunAuditor:
         os.makedirs(output_dir, exist_ok=True)
 
         self.status_path = os.path.join(output_dir, STATUS_FILE)
+        self.batches_path = os.path.join(output_dir, BATCHES_FILE)
+        self.global_step = 0
         self.log_path = os.path.join(output_dir, LOG_FILE)
         self.start_time = clock()
         self._last_write = 0.0
@@ -178,6 +182,14 @@ class RunAuditor:
         info = dict(info)
         info.setdefault("started_at", datetime.fromtimestamp(self.start_time).isoformat())
         _write_json_atomic(os.path.join(self.output_dir, RUN_INFO_FILE), info)
+
+    def update_run_info(self, extra: dict) -> None:
+        """Add keys to the ``run_info.json`` already written (e.g. what is only known later)."""
+        path = os.path.join(self.output_dir, RUN_INFO_FILE)
+        with open(path, encoding="utf-8") as f:
+            info = json.load(f)
+        info.update(extra)
+        _write_json_atomic(path, info)
 
     # --------------------------------------------------------------- tracking
     def configure(self, detector: str, select_by: str, n_train_batches: int,
@@ -221,7 +233,24 @@ class RunAuditor:
             self.last_loss = loss
             for name, value in (loss_components or {}).items():
                 self.component_sums[name] += value
+            if self.phase == "train":
+                self._log_batch(loss, loss_components)
         self.write_status()
+
+    def _log_batch(self, loss, loss_components) -> None:
+        """Append the batch to ``batches.jsonl`` (non-finite losses as ``null``)."""
+        self.global_step += 1
+
+        def clean(value):
+            return float(value) if value is not None and math.isfinite(value) else None
+
+        row = {"epoch": self.epoch, "batch": self.batch, "step": self.global_step,
+               "loss": clean(loss),
+               "loss_components": {k: clean(v) for k, v in (loss_components or {}).items()},
+               "lr": self.optimizer.param_groups[0]["lr"] if self.optimizer is not None else None,
+               "time_s": round(self.clock() - self.start_time, 3)}
+        with open(self.batches_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
 
     def end_epoch(self, record: dict, is_best: bool, selected_value) -> None:
         self.epoch_times.append(self.clock() - self.epoch_start)

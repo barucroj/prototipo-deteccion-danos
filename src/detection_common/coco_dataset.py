@@ -70,21 +70,40 @@ def polygons_to_mask(segmentation, height: int, width: int) -> np.ndarray:
     return mask
 
 
-def final_categories(class_map: Mapping[str, Optional[str]]) -> Dict[int, str]:
-    """``{final_id: final_name}``: the non-None final names, sorted, as ids 1..N."""
-    names = sorted({name for name in class_map.values() if name is not None})
+def final_categories(class_map: Mapping[str, Optional[str]],
+                     final_classes: Optional[Iterable[str]] = None) -> Dict[int, str]:
+    """``{final_id: final_name}``: the final names, sorted, as ids 1..N.
+
+    Args:
+        final_classes: Forces the final class set. Without it the classes are
+            the non-None targets of ``class_map``; with it they are exactly
+            these names, so a dataset that has no examples of some of them
+            (Carparts-Seg labels neither fender nor grille) still gets the same
+            ids as one that has them all. Every non-None target must be one of
+            them.
+    """
+    targets = {name for name in class_map.values() if name is not None}
+    if final_classes is None:
+        names = sorted(targets)
+    else:
+        names = sorted(set(final_classes))
+        unknown = sorted(targets - set(names))
+        if unknown:
+            raise ValueError(f"class_map targets {unknown} are not in final_classes {names}")
     return {i: name for i, name in enumerate(names, start=1)}
 
 
 def apply_class_map(coco: dict, class_map: Mapping[str, Optional[str]],
-                    exclude_category_ids: Iterable[int] = ()) -> Tuple[dict, dict]:
+                    exclude_category_ids: Iterable[int] = (),
+                    final_classes: Optional[Iterable[str]] = None) -> Tuple[dict, dict]:
     """Rewrite a COCO dict's categories through ``class_map``.
 
     Categories in ``exclude_category_ids`` are removed first (as without a
     map). Every remaining category name must be a key of ``class_map`` and
     every key must be a category of the file, so a typo raises instead of
     silently dropping or keeping a class. Annotations of classes mapped to
-    ``None`` are removed; merged classes share one final id.
+    ``None`` are removed; merged classes share one final id. ``final_classes``
+    fixes the final ids (see :func:`final_categories`).
 
     Returns:
         ``(new_coco, stats)``. ``new_coco`` is a copy with final
@@ -102,7 +121,7 @@ def apply_class_map(coco: dict, class_map: Mapping[str, Optional[str]],
         raise ValueError(f"class_map does not match the dataset: missing {missing}, "
                          f"unknown {unknown}")
 
-    final = final_categories(class_map)
+    final = final_categories(class_map, final_classes)
     final_id = {name: i for i, name in final.items()}
     id_map = {cid: (final_id[class_map[name]] if class_map[name] is not None else None)
               for cid, name in original.items()}
@@ -160,6 +179,8 @@ class CocoDetectionDataset(Dataset):
             applied on load via :func:`apply_class_map`. Images left without
             annotations by it are handled like empty images (dropped when
             ``skip_empty``); ``class_map_stats`` reports how many.
+        final_classes: Optional fixed set of final class names (only with
+            ``class_map``); see :func:`final_categories`.
 
     Attributes:
         coco_gt: The (possibly remapped) COCO dict. Use it, not the JSON on
@@ -177,6 +198,7 @@ class CocoDetectionDataset(Dataset):
         exclude_category_ids: Iterable[int] = (),
         transforms=None,
         class_map: Optional[Mapping[str, Optional[str]]] = None,
+        final_classes: Optional[Iterable[str]] = None,
     ):
         self.images_dir = images_dir
         self.ann_json_path = ann_json_path
@@ -190,7 +212,7 @@ class CocoDetectionDataset(Dataset):
         self.class_map = dict(class_map) if class_map is not None else None
         self.class_map_stats = None
         if class_map is not None:
-            coco, self.class_map_stats = apply_class_map(coco, class_map, excluded)
+            coco, self.class_map_stats = apply_class_map(coco, class_map, excluded, final_classes)
             excluded = set()
         self.coco_gt = coco
         self.categories = {
@@ -276,6 +298,7 @@ def build_dataset(cfg, split: str, data_root: str = None, use_class_map: bool = 
         with_masks=cfg.with_masks,
         exclude_category_ids=cfg.exclude_category_ids,
         class_map=cfg.class_map if use_class_map else None,
+        final_classes=cfg.final_classes if use_class_map else None,
         **kwargs,
     )
 

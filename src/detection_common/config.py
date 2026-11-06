@@ -41,6 +41,10 @@ class DetectorConfig:
         class_map: Optional original-name -> final-name (or ``None`` =
             discard) table applied to every split on load; see
             :func:`src.detection_common.coco_dataset.apply_class_map`.
+        final_classes: Optional fixed set of final class names for
+            ``class_map``; forces the final ids even for classes the dataset
+            never labels (see
+            :func:`src.detection_common.coco_dataset.final_categories`).
         default_select_by: Which COCO AP picks ``best_model.pth``: ``"bbox"``
             or ``"segm"`` (mask AP; only for ``with_masks`` configs). Use
             ``"segm"`` when the masks are what a downstream module consumes.
@@ -62,6 +66,7 @@ class DetectorConfig:
     default_lr: float = 0.005
     default_select_by: str = "bbox"
     class_map: Optional[Dict[str, Optional[str]]] = None
+    final_classes: Optional[Tuple[str, ...]] = None
 
     def split_paths(self, split: str, data_root: str = None) -> Tuple[str, str]:
         """Absolute-ish ``(images_dir, annotations_path)`` for one split.
