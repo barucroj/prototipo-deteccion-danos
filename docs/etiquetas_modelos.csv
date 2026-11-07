@@ -34,3 +34,13 @@ partes,car_parts/v2,26,tire,llanta (neumático),tire,
 partes,car_parts/v2,27,trunk,cajuela,trunk,
 partes,car_parts/v2,28,wheel,rin,wheel,
 partes,car_parts/v2,29,windshield,parabrisas,front_glass,renombrada: en el dataset front_glass es el parabrisas (hallazgo h)
+partes,car_parts/v3_mix,1,bumper,defensa (delantera o trasera),Roboflow: back_bumper; bumper | HITL: Front-bumper; Back-bumper,fusiona delantera y trasera
+partes,car_parts/v3_mix,2,door,puerta (sin su ventana ni el marco),Roboflow: left/right_front_door; left/right_back_door | HITL: Front-door; Back-door,fusiona izq./der. y delantera/trasera; en HITL se restan ventana y espejo y se quita el marco
+partes,car_parts/v3_mix,3,fender,salpicadera (delantera o trasera),Roboflow: front_fender; back_fender | HITL: Fender; Quarter-panel,fusiona delantera y trasera
+partes,car_parts/v3_mix,4,glass,cristal (parabrisas; medallón o ventanilla),Roboflow: front_glass; back_glass; left/right_front_glass; left/right_back_glass; left_quater_glass; right_quarter_glass | HITL: Windshield; Back-windshield; Front-window; Back-window,fusiona todos los cristales
+partes,car_parts/v3_mix,5,grille,parrilla,Roboflow: radiator | HITL: Grille,
+partes,car_parts/v3_mix,6,hood,cofre,Roboflow: hood | HITL: Hood,
+partes,car_parts/v3_mix,7,light,faro o calavera,Roboflow: left_front_light; right_front_lights; left_back_lights; right_back_light | HITL: Headlight; Tail-light,sin faros de niebla ni direccionales
+partes,car_parts/v3_mix,8,mirror,espejo lateral,Roboflow: side_mirror | HITL: Mirror,
+partes,car_parts/v3_mix,9,trunk,cajuela,Roboflow: trunk | HITL: Trunk,
+partes,car_parts/v3_mix,10,wheel,rueda completa (llanta con rin),Roboflow: tire | HITL: Front-wheel; Back-wheel,el wheel de Roboflow (solo el rin) se descarta

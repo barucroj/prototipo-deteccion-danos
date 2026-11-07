@@ -5,8 +5,8 @@ runs a detector on it, and shows the result with predicted boxes, labels and,
 for Mask R-CNN checkpoints, masks drawn on top.
 
 Works with any checkpoint saved by the train CLIs: they record their own
-``arch`` and ``categories``, so the same script handles car_parts v2 (Mask
-R-CNN, 29 final classes from the class map; the default), car_parts v1
+``arch`` and ``categories``, so the same script handles car_parts v3_mix (Mask
+R-CNN, 10 classes; the default), car_parts v2 (29 classes), car_parts v1
 (Faster R-CNN, boxes only, 47 original classes) and the damage Mask R-CNN
 without being told which is which.
 
@@ -42,7 +42,7 @@ from src.detection_common.visualize import draw_detections  # noqa: E402
 # against the project root, so this stays valid regardless of where you run
 # the script from. Point it at any checkpoint saved by a train CLI, e.g.
 # models/checkpoints/damage/v1/best_model.pth for the damage detector.
-DEFAULT_CHECKPOINT = os.path.join("models", "checkpoints", "car_parts", "v2", "best_model.pth")
+DEFAULT_CHECKPOINT = os.path.join("models", "checkpoints", "car_parts", "v3_mix", "best_model.pth")
 
 # Minimum confidence score for a detection to be drawn/reported. Stricter than
 # the 0.5 of tests/m2_parts/evaluate_test_set_v2.ipynb.

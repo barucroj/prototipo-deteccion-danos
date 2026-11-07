@@ -28,7 +28,7 @@ from src.m4_comparison.view_check import (DEFAULT_MIN_VIEW_OVERLAP, DEFAULT_MIN_
                                           check_same_view)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_PARTS_CHECKPOINT = os.path.join(PROJECT_ROOT, "models", "checkpoints", "car_parts", "v2", "best_model.pth")
+DEFAULT_PARTS_CHECKPOINT = os.path.join(PROJECT_ROOT, "models", "checkpoints", "car_parts", "v3_mix", "best_model.pth")
 DEFAULT_DAMAGE_CHECKPOINT = os.path.join(PROJECT_ROOT, "models", "checkpoints", "damage", "v2", "best_model.pth")
 
 

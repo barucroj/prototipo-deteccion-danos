@@ -60,7 +60,7 @@ def sidebar() -> PipelineSettings:
         help="Reduce la foto más grande al lado largo de la otra; la más chica nunca se agranda.")
     specular = st.sidebar.checkbox(
         "Reducir reflejos especulares", value=False,
-        help="Los modelos vigentes (car_parts/v2, damage/v2) se entrenaron con imágenes crudas.")
+        help="Los modelos vigentes (car_parts/v3_mix, damage/v2) se entrenaron con imágenes crudas.")
     clahe = st.sidebar.checkbox("CLAHE", value=False)
 
     st.sidebar.subheader("M2 / M3. Detección")

@@ -39,7 +39,7 @@ from src.m3_damage.assignment.output import save_analysis  # noqa: E402
 
 DEFAULT_INPUT = os.path.join(PROJECT_ROOT, "data", "raw", "own-data", "TESTS",
                              "duster-condicion media-multiples angulos")
-DEFAULT_PARTS_CHECKPOINT = os.path.join(PROJECT_ROOT, "models", "checkpoints", "car_parts", "v2", "best_model.pth")
+DEFAULT_PARTS_CHECKPOINT = os.path.join(PROJECT_ROOT, "models", "checkpoints", "car_parts", "v3_mix", "best_model.pth")
 DEFAULT_DAMAGE_CHECKPOINT = os.path.join(PROJECT_ROOT, "models", "checkpoints", "damage", "v2", "best_model.pth")
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 
