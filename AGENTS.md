@@ -64,11 +64,11 @@ Espiral de Boehm con 4 vueltas (una por módulo M1-M4), seguidas de integración
 cierre. **Fecha final: 23 nov 2026.** El roadmap de 5 sprints (Sprint 1 Preprocesamiento …
 Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen.
 
-## Estado real (rama `feature/m4-report`, 2026-11-03)
+## Estado real (2026-11-06)
 | Pieza | Estado |
 |---|---|
 | M1 | **Hecho.** Validación de formato/resolución, carga con EXIF, reflejos y CLAHE opcionales, metadatos (`pipeline.py`), sin resize ni ImageNet; transform para entrenar/evaluar con M1 y experimento de AP, con pruebas. Resultado: con los modelos vigentes, M1 **no mejora** el AP (los reflejos lo empeoran; ver la sección de M1). `normalization.py` (512×512 + ImageNet) sigue en el repo pero fuera del camino hacia los detectores. |
-| M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN, 29 clases finales) **entrenado** el 2026-09-29 (ver Checkpoints): test box AP 0.6041, mask AP 0.5779; supera a v1 en AP de caja (+0.028, IC 95 % [+0.008, +0.047]) pero no en AP50. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. |
+| M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN, 29 clases finales) **entrenado** el 2026-09-29 (ver Checkpoints): test box AP 0.6041, mask AP 0.5779; supera a v1 en AP de caja (+0.028, IC 95 % [+0.008, +0.047]) pero no en AP50. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. **Desde el 2026-11-06 el orquestador usa `car_parts/v3_mix`** (10 clases, Roboflow + HITL; ver Checkpoints): test de Roboflow box AP 0.710, mask AP 0.697; con él, 94 % de los daños de `batch1`+`batch2` quedan asignados a una parte (v2: 48 %). |
 | M3 | Modelo vigente: `damage/v2` (test: box AP 0.5275, mask AP 0.5075; frente a `damage/v1` las diferencias no son distinguibles del ruido, ver Checkpoints). Asignación a partes **hecha** (`src/m3_damage/assignment/`): parte con mayor solapamiento (mín. 0.5, partes con confianza ≥ 0.7), `pos_relativa`, JSON con `parte_id` por instancia, PNG por daño e imagen anotada, con pruebas. |
 | M4 | **Código completo** (2026-10-30): `src/m4_comparison/` empareja partes, clasifica cada daño como nuevo/preexistente/no visible, arma el reporte JSON de la sección 4.9.2 y dibuja el mapa de cambios PNG; conectado al orquestador. **Primera medición** (2026-11-03) con `batch1` (11 pares, 13 daños, todos nuevos; ver "Evaluación con pares A/B"): con umbral de daños 0.5, nuevos P 0.500 / R 0.615 / F1 0.552; el barrido da el mejor F1 en 0.75 (P 0.889 / R 0.615 / F1 0.727), **elegido sobre el mismo lote** (calibración, no prueba). Las distancias (0.25 partes, 0.15 daños) siguen **sin calibrar**: `batch1` no tiene daños preexistentes. |
 | Orquestador / Streamlit | **Flujo completo** (2026-10-30): `src/pipeline/orchestrator.py` corre M1→M2→M3→M4 y `src/app/streamlit_app.py` muestra resumen, mapa y tabla por daño. La interfaz se renderizó con `AppTest` y un resultado real, pero la carga de archivos sigue **sin probarse a mano en navegador**. |
@@ -196,7 +196,7 @@ falta capturar y anotar 20-40 pares propios marcando qué daños son nuevos en B
   `src/m3_damage/assignment/`). Reproduce los números de test de v1.
 - `tests/m2_parts/manual_inference.py` y
   `tests/m3_damage/detector/manual_inference.py` — demos con GUI (selector de
-  archivo, ventana ajustada a la pantalla), no se colectan. Partes: default `car_parts/v2`,
+  archivo, ventana ajustada a la pantalla), no se colectan. Partes: default `car_parts/v3_mix`,
   umbral 0.7. Daños: default `damage/v2`, umbral 0.5, lista cada daño con su área de máscara.
   Ambos buscan la raíz del proyecto subiendo hasta `src/` (el de partes se rompió al moverlo
   cuando la calculaba por profundidad).
@@ -409,7 +409,7 @@ sin `class_map`) se conserva para reproducir v1. `MASK_CONFIG` (v2): `with_masks
   `COCOeval.evaluate` elimina `imgIds` repetidos; las pruebas verifican igualdad exacta con
   pycocotools (bbox y segm). Probado con v1 contra sí mismo en test: diferencia B = 0 exacta.
 
-### `car_parts/v3_10c` y `car_parts/v3_mix` — partes en 10 clases (2026-11-06, sin entrenar)
+### `car_parts/v3_10c` y `car_parts/v3_mix` — partes en 10 clases (entrenados 2026-11-06; v3_mix adoptado)
 Clases: bumper, door, fender, glass, grille, hood, light, mirror, trunk, wheel (ids 1..10 en
 orden alfabético). Se fusionan izq./der., delantera/trasera y todos los cristales y luces; se
 descartan partes chicas (manija, emblema, tapa de gasolina) y accesorios (techo, canastilla,
@@ -435,7 +435,8 @@ comandos: sección 8 de `docs/m2_m3_reentrenar_modelos.txt`.
   referencia `v3_10c`): se adopta `v3_mix` si en mask AP el IC 95 % de la diferencia en el test
   de Roboflow no queda por debajo de cero (solo no inferioridad). El test de HITL (IC por encima
   de cero) solo cuenta con `--hitl-aligned`, cuando el criterio esté alineado; mientras, se
-  reporta aparte. La caja se reporta sin decidir. **No entrenar hasta que el usuario confirme.**
+  reporta aparte. La caja se reporta sin decidir. **Resultado (2026-11-06): se adopta `v3_mix`** (ver
+  Checkpoints). `decide_mix` fija la salida a UTF-8 (la consola de Windows fallaba con "−").
 - `class_map_10.py`: `CLASS_MAP_ROBOFLOW` (47 originales; decisiones aplicadas el 2026-11-06 con
   la muestra `car_parts/_muestra_clases_10c`: `windshield` = limpiaparabrisas → `None`,
   `front_mirror` → `None`, luces como arriba), `CLASS_MAP_CARPARTS_SEG` (23, solo prueba
@@ -647,7 +648,8 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   métricas, tabla por par y las imágenes con el GT en verde.
 
 ## `src/pipeline/` y `src/app/` — orquestador e interfaz
-- `pipeline/orchestrator.py` — `PairPipeline.from_checkpoints()` carga `car_parts/v2` y
+- `pipeline/orchestrator.py` — `PairPipeline.from_checkpoints()` carga `car_parts/v3_mix` (desde el
+  2026-11-06; antes `car_parts/v2`) y
   `damage/v2` una sola vez; `analyze_pair(path_a, path_b, PipelineSettings)` valida **ambas**
   fotos antes de cualquier inferencia y corre M1 → M2+M3 sobre A y B y luego M4.
   `PipelineSettings`: pasos de M1 (reflejos apagados, ver M1), validación de resolución,
@@ -683,7 +685,37 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   1 época: bbox AP 0.3082, mask AP 0.2958, 105 s/época). No es un modelo usable.
 - `car_parts/v2_fallido_rle/` — primera corrida real de v2 (29 clases), falló en la época 2 por
   el bug de RLE ya corregido en `7bbf1b9`. Época 1 en val: box AP 0.487, mask AP 0.477.
-- `car_parts/v2/` — **modelo de partes vigente para M2/M3.** Mask R-CNN, 29 clases finales
+- `car_parts/v3_mix/` — **modelo de partes vigente para M2/M3 desde el 2026-11-06** (default de
+  `PairPipeline`, `analyze_folder.py`, `analyze_pair.py`, `evaluate_pairs.py`,
+  `sweep_damage_threshold.py`, Streamlit y los `manual_inference.py`). Mask R-CNN, 10 clases,
+  train = Roboflow 327 + HITL 802, 20 épocas, `--lr-step-size 14`, lr 0.005, batch 2, AMP,
+  augmentation, semilla 42, selección por mask AP en el val de Roboflow + HITL (130 imágenes).
+  Commit `77059e3` (árbol limpio). 2 h 32 min (~455 s/época), pico 2.84 GB.
+  - Val: mejor época 17 (después de bajar el LR en la 15), box AP 0.664, mask AP 0.641; sube
+    de ~0.62 a ~0.64 al bajar el LR.
+  - **Test de Roboflow** (16 imgs, decide; `v3_mix/compare_10c/`): box AP 0.710 [0.618, 0.803],
+    mask AP 0.697 [0.609, 0.781]. Contra `v3_10c`: caja +0.012 [−0.017, +0.044], máscara +0.014
+    [−0.012, +0.040] (no distinguibles: **no inferior**, `decision_v3_mix.md` → SÍ). Por clase
+    mejora de forma distinguible en wheel (caja +0.055, máscara +0.033), door (máscara +0.050) y
+    fender (caja +0.084); ninguna empeora de forma distinguible (bumper −0.07 y grille −0.03 en
+    caja, dentro del ruido). AP50 −0.018 (caja) / −0.022 (máscara), no distinguible.
+  - **Test de HITL** (98 imgs, aparte, puede ser optimista): caja 0.313 → 0.625, máscara 0.335 →
+    0.594 contra `v3_10c`; mejora en las 10 clases (trunk 0.08 → 0.50, fender 0.15 → 0.57 en
+    caja). `v3_10c` y v2 quedan iguales en HITL (0.31 / 0.33): Roboflow solo no generaliza a
+    ese dominio.
+  - **Efecto en M3/M4** (2026-11-06, 29 pares de `batch1`+`batch2`, umbral de daños 0.75,
+    `--force`, histéresis 0.3; barridos en `data/processed/eval/batch{1,2}_umbral_v3mix_force_hist03/`):
+    P/R/F1 y estados **idénticos** a v2 en todos los umbrales (batch1 0.75: P 0.875 / R 0.538 /
+    F1 0.667; batch2: 8 nuevos falsos), pero daños con parte asignada 25 → 49 de 52 (48 % → 94 %),
+    partes detectadas 354 → 480 y preexistentes emparejados por parte 8 → 19 de 21 (el resto por
+    imagen). v2 fallaba en las fotos propias (p. ej. `batch2/p14`, vista lateral: `back_glass` y
+    `trunk` en A, solo `tire` en B); v3_mix encuentra puertas, salpicadera, cristales, espejo y
+    rueda. El umbral de partes 0.7 sigue **sin calibrar** para v3_mix.
+- `car_parts/v3_10c/` — misma receta, solo Roboflow train (327). 48 min (~143 s/época), pico
+  2.23 GB. Val plano desde la época 4 (mejor, mask AP 0.449; la 20 da 0.448: empate): 98 de las
+  130 imágenes de val son de HITL, que no vio. Test de Roboflow box AP 0.697, mask AP 0.683; HITL
+  0.313 / 0.335. Es la referencia de la regla de adopción.
+- `car_parts/v2/` — modelo de partes de M2/M3 hasta el 2026-11-06 (lo reemplazó `v3_mix`). Mask R-CNN, 29 clases finales
   (`class_map`), 20 épocas, lr 0.005 sin step, batch 2, AMP, augmentation, semilla 42,
   `freeze_bn` off, selección por mask AP. Commit `895f096` (árbol limpio). 33 min (~99 s/época).
   - Mejor época 16 (val): box AP 0.6664, mask AP 0.6435. Val se estanca desde la época ~6-8
