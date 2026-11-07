@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from typing import List, Optional
 
 from src.m2_parts.compare_10c import HITL_WARNING
@@ -137,6 +138,8 @@ def main(argv: Optional[List[str]] = None):
     text = render_markdown(decision)
     with open(stem + ".md", "w", encoding="utf-8") as f:
         f.write(text)
+    if hasattr(sys.stdout, "reconfigure"):  # the Windows console is cp1252 and the report has "−"
+        sys.stdout.reconfigure(encoding="utf-8")
     print(text)
     return decision
 
