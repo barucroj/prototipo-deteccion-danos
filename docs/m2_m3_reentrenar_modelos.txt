@@ -278,8 +278,9 @@ lista completa. Los flags mas importantes (identicos para todos):
    haria ~2000 iteraciones, menos que las ~3300 de v2. best_model.pth es la
    mejor epoca en val, asi que las epocas de mas solo cuestan tiempo.
 
-   ESTADO (2026-11-06): listo para entrenar; lanzar cuando el usuario lo
-   indique. Criterios alineados con Roboflow (2026-11-06): en HITL se restan
+   ESTADO (2026-11-06): ENTRENADOS los dos (commit 77059e3, arbol limpio) y
+   ADOPTADO v3_mix como modelo de partes del orquestador (resultados al final
+   de esta seccion). Criterios alineados con Roboflow (2026-11-06): en HITL se restan
    de la puerta su ventana y su espejo (opcion A) y se quita el marco por
    encima de la linea de cintura; en Roboflow el rin (wheel) pasa a None y la
    llanta (tire) es wheel, una instancia por rueda.
@@ -317,9 +318,10 @@ lista completa. Los flags mas importantes (identicos para todos):
      light       615 / 61 / 31     1319 / 153 / 163  194
      mirror      447 / 48 / 21     784 / 102 / 101   122
      trunk       156 / 16 / 7*     334 / 47 / 35     42
-     wheel       1506 / 148 / 71   1404 / 171 / 175  246
+     wheel       882 / 86 / 41     1404 / 171 / 175  216
    (* menos de 10: poco fiable en el test de Roboflow.) Con el cambio de
-   light, Roboflow light paso de 969/94/43 a 615/61/31; ninguna imagen queda
+   light, Roboflow light paso de 969/94/43 a 615/61/31; con el de la rueda
+   (solo tire), wheel paso de 1506/148/71 a 882/86/41; ninguna imagen queda
    vacia.
 
    Evaluacion: mismas imagenes y clases para todos; v2 mapeado como
@@ -364,3 +366,40 @@ lista completa. Los flags mas importantes (identicos para todos):
    -> 20 epocas ~ 1 h. Prueba corta con los datos finales
    (car_parts/smoke_mix_hitl_b, 60/30 imagenes, 2 epocas): completa, mask AP
    0.18 -> 0.32, pico 2.84 GB.
+
+   RESULTADOS (2026-11-06)
+   Entrenamiento (RTX 3050, 20 epocas, sin losses NaN):
+     v3_10c  48 min (~143 s/epoca), pico 2.23 GB. Mejor epoca 4 (val mask AP
+             0.449); val plano desde ahi (epoca 20: 0.448). 98 de las 130
+             imagenes de val son de HITL, que este modelo no vio.
+     v3_mix  2 h 32 min (~455 s/epoca), pico 2.84 GB. Mejor epoca 17 (val box
+             AP 0.664, mask AP 0.641); sube de ~0.62 a ~0.64 al bajar el LR en
+             la 15.
+   Test (models/checkpoints/car_parts/v3_mix/compare_10c/, IC 95 %):
+                        Roboflow (16, decide)    HITL (98, aparte)
+     v3_10c  caja       0.697                    0.313
+             mascara    0.683                    0.335
+     v3_mix  caja       0.710                    0.625
+             mascara    0.697                    0.594
+     v2 (10) caja       0.680                    0.307
+             mascara    0.669                    0.327
+     v3_mix - v3_10c en Roboflow: caja +0.012 [-0.017, +0.044], mascara
+     +0.014 [-0.012, +0.040] -> no distinguibles, no inferior. Por clase mejora
+     de forma distinguible en wheel, door (mascara) y fender (caja); ninguna
+     empeora de forma distinguible. En HITL mejora en las 10 clases.
+   decide_mix -> decision_v3_mix.md: SE ADOPTA v3_mix. (decide_mix fallaba al
+   imprimir en la consola de Windows por el signo "-" unicode; ahora fija
+   stdout a UTF-8.)
+
+   Cambio en el sistema: PairPipeline (orquestador, Streamlit, analyze_pair,
+   evaluate_pairs, sweep_damage_threshold), analyze_folder y los
+   manual_inference usan car_parts/v3_mix por defecto; --parts-checkpoint
+   sigue permitiendo v2. Clases y traduccion en docs/etiquetas_modelos.csv.
+   Efecto end-to-end (batch1 + batch2, 29 pares, --force, histeresis 0.3;
+   data/processed/eval/batch{1,2}_umbral_v3mix_force_hist03/): P/R/F1 y
+   estados identicos a v2 en todos los umbrales, pero danos con parte
+   asignada 25 -> 49 de 52 (umbral de danos 0.75) y preexistentes emparejados
+   por parte 8 -> 19 de 21. El umbral de partes (0.7) sigue sin calibrar.
+
+   Prueba externa pendiente (no elige modelo):
+       ./venv_cuda/Scripts/python.exe -m src.m2_parts.compare_10c --model v3_mix=models/checkpoints/car_parts/v3_mix/best_model.pth --model v3_10c=models/checkpoints/car_parts/v3_10c/best_model.pth --dataset carparts_seg --output models/checkpoints/car_parts/v3_mix/compare_10c

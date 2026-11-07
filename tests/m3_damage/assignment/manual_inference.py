@@ -11,7 +11,7 @@ and:
    damages detected (every damage >= 0.5), and the final result showing only
    the damages and the outline of the part each one sits on.
 
-Defaults: car_parts/v2 with parts >= 0.7, damage/v2 with damages >= 0.5, and a
+Defaults: car_parts/v3_mix with parts >= 0.7, damage/v2 with damages >= 0.5, and a
 damage belongs to a part when >= 0.5 of its area lies on it. Checkpoints are
 overridable as argv[1] (parts) and argv[2] (damage).
 
@@ -47,7 +47,7 @@ from src.detection_common.visualize import draw_detections  # noqa: E402
 
 # Checkpoints to use, overridable as argv[1] and argv[2]. Relative paths
 # resolve against the project root, so this works from any working directory.
-DEFAULT_PARTS_CHECKPOINT = os.path.join("models", "checkpoints", "car_parts", "v2", "best_model.pth")
+DEFAULT_PARTS_CHECKPOINT = os.path.join("models", "checkpoints", "car_parts", "v3_mix", "best_model.pth")
 DEFAULT_DAMAGE_CHECKPOINT = os.path.join("models", "checkpoints", "damage", "v2", "best_model.pth")
 
 # Where the JSON, the damage masks and the annotated image are written (in .gitignore).
