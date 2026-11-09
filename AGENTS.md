@@ -672,6 +672,28 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
     `glass shatter` en una luneta con reflejos (p24), `crack` en un poste de luz (p13).
   - Frente a `batch1` (P 0.875 / R 0.538 / F1 0.667): los daños agregados con IA eran más evidentes
     que los reales.
+- **`batch_final` = los tres lotes juntos** (2026-11-09, `data/raw/own-data/batch_final/`): copias
+  renumeradas p01-p53 (`pNN_b1|b2|b3-<vista>_A|B`; p01-p11 de `batch1`, p12-p29 de `batch2`, p30-p53 de
+  `batch3`), anotaciones unidas desde los `instances_images.json` (con `dano_id`, sin p02 de `batch3`),
+  mapeo en `mapeo_lotes.csv`. La carpeta `final batch` del usuario tiene las mismas fotos con números de par
+  repetidos (y la B duplicada `.png` de `batch2`), por eso no se evalúa directamente. **53 pares: 32 nuevos,
+  15 preexistentes, 1 no visible.** Incluye el lote de calibración (`batch1`): es el resultado global, la
+  prueba independiente es `batch3`. Resultados con v3_mix, daños 0.75, histéresis 0.3, IoU 0.3
+  (`data/processed/eval/final_*`):
+  - sin forzar: `view_check` bloquea 9 de 53; P 0.429 / R 0.281 / F1 0.340.
+  - forzado: **P 0.455 / R 0.312 / F1 0.370**, 12 nuevos falsos (0.23 por par), accuracy por par 0.698
+    (TP 12, FP 6, FN 10, TN 25), 31/53 pares exactos, tipo correcto 14 de 15, preexistentes bien 4 de 15.
+  - barrido: 0.30 → P 0.239 / R 0.500 / F1 0.323 con 0.96 nuevos falsos por par; 0.55 → 0.309 / 0.406 /
+    0.351; 0.75 → 0.455 / 0.312 / 0.370; mejor 0.90 → 0.600 / 0.281 / 0.383. El F1 queda entre 0.32 y 0.38:
+    el umbral mueve el equilibrio, no el techo.
+  - recall de nuevos por clase (0.75 / 0.30): golpe 4/7 / 6/7, rayón 4/19 / 6/19, faro roto 1/3 / 1/3,
+    cristal roto 1/2 / 2/2, fisura 0/1 / 1/1.
+  - causas de los 22 nuevos perdidos a 0.75 (`final_diagnostico/diagnostico.md` y su script): 9 mal
+    localizados (detección encima, IoU < 0.3), 6 con confianza < 0.75 (aparecen a 0.30), 6 que M3 no ve ni a
+    0.30 (todos rayones), 1 que M4 empareja como preexistente. Ninguno por la asignación a partes; de los 10
+    aciertos, 9 tienen parte coherente (sin etiquetas de partes no se mide "parte equivocada").
+  - Decisión (2026-11-09): no reentrenar M3 antes de la entrega; resultados congelados para el documento
+    técnico (instrucción en `TTR/Document/instruccion_cierre_documento.md`, fuera del repo).
 - **Streamlit**: barra lateral "Modo" → "Evaluar un lote etiquetado" (`app/evaluation_page.py`,
   lógica sin Streamlit en `app/evaluation_view.py`): evalúa o abre una evaluación guardada,
   métricas, tabla por par y las imágenes con el GT en verde.
