@@ -544,8 +544,8 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
 ### Pendiente
 - **M4**: confirmar el umbral de daños (0.75 en `batch1`) con un lote de prueba y calibrar las
   distancias con pares que tengan daños preexistentes (ver "Evaluación con pares A/B").
-- **M2**: el umbral de partes es 0.7 en la asignación (`DEFAULT_PART_THRESHOLD`) y 0.5 en los
-  demos, sin justificación medida; falta resolver partes que se solapan (hoy el NMS de
+- **M2**: umbral de partes 0.7 (`DEFAULT_PART_THRESHOLD`) **medido para v3_mix** el 2026-11-06 (ver
+  Checkpoints: está en la meseta de F1); los demos usan 0.5. Falta resolver partes que se solapan (hoy el NMS de
   torchvision es por clase y no resuelve solapes entre clases distintas).
 
 ## `src/m4_comparison/` — M4
@@ -710,7 +710,22 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
     partes detectadas 354 → 480 y preexistentes emparejados por parte 8 → 19 de 21 (el resto por
     imagen). v2 fallaba en las fotos propias (p. ej. `batch2/p14`, vista lateral: `back_glass` y
     `trunk` en A, solo `tire` en B); v3_mix encuentra puertas, salpicadera, cristales, espejo y
-    rueda. El umbral de partes 0.7 sigue **sin calibrar** para v3_mix.
+    rueda.
+  - **Umbral de partes** (2026-11-06, `v3_mix/umbral_partes/`: md, csv, json, `conteos.npz`, 4
+    figuras y los dos scripts, que viven ahí y no en el repo): P/R/F1 de partes con máscara a IoU
+    ≥ 0.5 contra el umbral 0.05-0.95, elegido en val (130 imgs) y confirmado en test (114). F1 casi
+    plano entre **0.65 y 0.90** (a < 0.01 del máximo en val); máximo en val 0.85 (F1 0.916 contra
+    0.910 en 0.70). En test, 0.85 − 0.70 = **−0.001 [−0.006, +0.003]**, no distinguible: 0.70 da
+    P 0.925 / R 0.870 / F1 0.896 (117 partes falsas, 215 perdidas), 0.85 P 0.942 / R 0.852 / F1
+    0.895 (86 / 244). Los mejores umbrales por clase (0.70-0.95) no se repiten en test.
+    **Se mantiene 0.70**: dentro de la meseta, y con un empate conviene el recall (una parte
+    perdida deja el daño sin parte; una falsa solo estorba si toca un daño).
+  - **Prueba externa en Carparts-Seg** (2026-11-06, `v3_mix/compare_10c/compare_10c_carparts_seg_test.md`,
+    268 imgs, solo light/bumper/hood/wheel/mirror/trunk, IC optimista, no elige modelo): v3_mix
+    caja 0.323 [0.279, 0.369], máscara 0.329 [0.284, 0.374]; v3_10c 0.246 / 0.250; v2 0.229 / 0.238.
+    v3_mix supera de forma distinguible a los dos (máscara +0.079 y +0.091): generaliza mejor a un
+    tercer dataset, sobre todo en bumper, hood y light. wheel (~0.09-0.15) sigue sin ser
+    interpretable (ruedas unidas en el GT).
 - `car_parts/v3_10c/` — misma receta, solo Roboflow train (327). 48 min (~143 s/época), pico
   2.23 GB. Val plano desde la época 4 (mejor, mask AP 0.449; la 20 da 0.448: empate): 98 de las
   130 imágenes de val son de HITL, que no vio. Test de Roboflow box AP 0.697, mask AP 0.683; HITL
