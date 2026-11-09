@@ -400,6 +400,12 @@ lista completa. Los flags mas importantes (identicos para todos):
    estados identicos a v2 en todos los umbrales, pero danos con parte
    asignada 25 -> 49 de 52 (umbral de danos 0.75) y preexistentes emparejados
    por parte 8 -> 19 de 21.
+   Lote de prueba batch3 (2026-11-09, 24 pares reales, 19 nuevos y 9
+   preexistentes; detalle en AGENTS.md, "Evaluacion con pares A/B"): con
+   v3_mix, danos 0.75 y --force, P 0.500 / R 0.158 / F1 0.240 y 3 nuevos
+   falsos en 24 pares. El limite es M3 (damage/v2) con rayones reales: 7 de
+   22 detectados aun a 0.30. Mejorar M3 en rayones es el siguiente paso de
+   entrenamiento si hubiera tiempo.
 
    Umbral de partes (2026-11-06): se mantiene 0.70. Barrido 0.05-0.95 de
    P/R/F1 de partes (mascara, IoU >= 0.5), elegido en val y confirmado en
