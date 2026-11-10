@@ -70,9 +70,9 @@ Sprint 5 Testing) es **obsoleto**; no reflejarlo como vigente en ningún resumen
 | M1 | **Hecho.** Validación de formato/resolución, carga con EXIF, reflejos y CLAHE opcionales, metadatos (`pipeline.py`), sin resize ni ImageNet; transform para entrenar/evaluar con M1 y experimento de AP, con pruebas. Resultado: con los modelos vigentes, M1 **no mejora** el AP (los reflejos lo empeoran; ver la sección de M1). `normalization.py` (512×512 + ImageNet) sigue en el repo pero fuera del camino hacia los detectores. |
 | M2 | `car_parts/v1` = Faster R-CNN, **solo cajas** (no cumple la spec). `car_parts/v2` (Mask R-CNN, 29 clases finales) **entrenado** el 2026-09-29 (ver Checkpoints): test box AP 0.6041, mask AP 0.5779; supera a v1 en AP de caja (+0.028, IC 95 % [+0.008, +0.047]) pero no en AP50. Umbral de confianza de partes y manejo de partes solapadas: **no definidos**. **Desde el 2026-11-06 el orquestador usa `car_parts/v3_mix`** (10 clases, Roboflow + HITL; ver Checkpoints): test de Roboflow box AP 0.710, mask AP 0.697; con él, 94 % de los daños de `batch1`+`batch2` quedan asignados a una parte (v2: 48 %). |
 | M3 | Modelo vigente: `damage/v2` (test: box AP 0.5275, mask AP 0.5075; frente a `damage/v1` las diferencias no son distinguibles del ruido, ver Checkpoints). Asignación a partes **hecha** (`src/m3_damage/assignment/`): parte con mayor solapamiento (mín. 0.5, partes con confianza ≥ 0.7), `pos_relativa`, JSON con `parte_id` por instancia, PNG por daño e imagen anotada, con pruebas. |
-| M4 | **Código completo** (2026-10-30): `src/m4_comparison/` empareja partes, clasifica cada daño como nuevo/preexistente/no visible, arma el reporte JSON de la sección 4.9.2 y dibuja el mapa de cambios PNG; conectado al orquestador. **Primera medición** (2026-11-03) con `batch1` (11 pares, 13 daños, todos nuevos; ver "Evaluación con pares A/B"): con umbral de daños 0.5, nuevos P 0.500 / R 0.615 / F1 0.552; el barrido da el mejor F1 en 0.75 (P 0.889 / R 0.615 / F1 0.727), **elegido sobre el mismo lote** (calibración, no prueba). Las distancias (0.25 partes, 0.15 daños) siguen **sin calibrar**: `batch1` no tiene daños preexistentes. |
+| M4 | **Código completo** (2026-10-30): `src/m4_comparison/` empareja partes, clasifica cada daño como nuevo/preexistente/no visible, arma el reporte JSON de la sección 4.9.2 y dibuja el mapa de cambios PNG; conectado al orquestador. **Primera medición** (2026-11-03) con `batch1` (11 pares, 13 daños, todos nuevos; ver "Evaluación con pares A/B"): con umbral de daños 0.5, nuevos P 0.500 / R 0.615 / F1 0.552; el barrido da el mejor F1 en 0.75 (P 0.889 / R 0.615 / F1 0.727), **elegido sobre el mismo lote** (calibración, no prueba). Las distancias (0.25 partes, 0.15 daños) siguen **sin calibrar**: `batch1` no tiene daños preexistentes. **Lote de prueba `batch3`** (2026-11-09, 24 pares reales, 19 nuevos y 9 preexistentes): con 0.75 y forzado, P 0.500 / R 0.158 / F1 0.240, 3 nuevos falsos en 24 pares; confirma 0.75, el límite son los rayones reales que M3 no ve (7/22). |
 | Orquestador / Streamlit | **Flujo completo** (2026-10-30): `src/pipeline/orchestrator.py` corre M1→M2→M3→M4 y `src/app/streamlit_app.py` muestra resumen, mapa y tabla por daño. La interfaz se renderizó con `AppTest` y un resultado real, pero la carga de archivos sigue **sin probarse a mano en navegador**. |
-| Pares A/B con ground truth | `batch1` (2026-11-03): 11 pares semisintéticos (daño agregado con IA en B), CVAT → COCO 1.0. Faltan pares sin cambios, con daños preexistentes y un lote de prueba separado. |
+| Pares A/B con ground truth | `batch1` (2026-11-03): 11 pares semisintéticos (daño agregado con IA en B), CVAT → COCO 1.0. `batch2`: 18 pares sin daños nuevos, con preexistentes. **`batch3` (2026-11-09): lote de prueba**, 24 pares (p02 excluido) de fotos reales con su versión editada con IA, con nuevos, preexistentes y pares sin daños. |
 | Evaluación | `src/evaluation/` + `scripts/evaluate_pairs.py` + `scripts/sweep_damage_threshold.py` + modo "Evaluar un lote etiquetado" en Streamlit, con pruebas. **Sin commitear** al 2026-11-03 (el usuario lo prueba antes). |
 
 ## Hallazgos técnicos (medidos, no supuestos)
@@ -542,10 +542,12 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
 `crack` es 39 % objetos pequeños (<32² px), lo que explica su AP bajo en v1.
 
 ### Pendiente
-- **M4**: confirmar el umbral de daños (0.75 en `batch1`) con un lote de prueba y calibrar las
-  distancias con pares que tengan daños preexistentes (ver "Evaluación con pares A/B").
-- **M2**: el umbral de partes es 0.7 en la asignación (`DEFAULT_PART_THRESHOLD`) y 0.5 en los
-  demos, sin justificación medida; falta resolver partes que se solapan (hoy el NMS de
+- **M4**: el umbral de daños 0.75 quedó confirmado con `batch3` (2026-11-09) y desde el 2026-11-10 es el
+  default (`DEFAULT_DAMAGE_THRESHOLD = 0.75`, también en el deslizador de Streamlit). Calibrar las
+  distancias con pares que tengan preexistentes (`batch2`, `batch3`) y recalibrar `view_check` con pares
+  reales (bloqueó 5 de 24 en `batch3`). Ver "Evaluación con pares A/B".
+- **M2**: umbral de partes 0.7 (`DEFAULT_PART_THRESHOLD`) **medido para v3_mix** el 2026-11-06 (ver
+  Checkpoints: está en la meseta de F1); los demos usan 0.5. Falta resolver partes que se solapan (hoy el NMS de
   torchvision es por clase y no resuelve solapes entre clases distintas).
 
 ## `src/m4_comparison/` — M4
@@ -642,7 +644,57 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   (`batch1_umbral/`): **0.75 → P 0.889, R 0.615, F1 0.727, 1 falso, 6/11 exactos**; de 0.5 a 0.75
   se quitan 7 falsos sin perder aciertos; 0.80 ya pierde 2 (0.75 está al borde de la meseta
   0.60-0.75). Con IoU 0.5 el mejor sería 0.30. **Umbral de calibración**: 13 daños del mismo lote;
-  `DEFAULT_DAMAGE_THRESHOLD` sigue en 0.5 hasta confirmarlo con un lote de prueba.
+  `DEFAULT_DAMAGE_THRESHOLD` quedó en 0.5 hasta confirmarlo con un lote de prueba (`batch3`, 2026-11-09);
+  desde el 2026-11-10 es 0.75.
+- **`batch3` = lote de prueba** (2026-11-09, `data/raw/own-data/batch3/`): fotos reales de 7 coches
+  (Jetta, Tiida, Accent, Infiniti, Focus, Sentra, Jeep). Cada par es una foto original y una versión
+  editada con IA: `-a` (daño borrado → A; la original es B) o `-b` (foto "después", no necesariamente con
+  cambios → B). Mapeo de nombres en `batch3/renombrado.csv`; IMG_0176 da dos pares (p17, p18). Etiquetado
+  en CVAT (`annotations/instances_default.json`, sin `dano_id`); `instances_images.json` (el que se usa)
+  excluye **p02** (decisión del usuario) y agrega `dano_id` por emparejamiento húngaro de cajas escaladas
+  del mismo tipo (9 daños, revisados en hoja; p11 rayón 1 IoU 0.21: el rayón de A está dentro de la zona
+  de B, se dejó preexistente). **24 pares: 19 daños nuevos, 9 preexistentes; 11 pares con nuevo, 5 solo
+  con preexistentes, 8 sin daños.** Resolución: versiones IA 896×1195, originales 3024×4032 (misma
+  proporción; igualar el tamaño reduce la original sin recortar). Correr con `--no-validate`.
+  Resultados con v3_mix, daños 0.75, histéresis 0.3, IoU 0.3 (`data/processed/eval/batch3*`):
+  - sin forzar (`batch3/`): `view_check` bloquea **5 pares de la misma vista** (p15-p18, Infiniti negro
+    con poca textura, y p22): primera medición con pares reales, sus umbrales (40 puntos, solape 0.5)
+    son demasiado estrictos. P 0.400 / R 0.105 / F1 0.167.
+  - forzado (`batch3_force/`): **P 0.500 / R 0.158 / F1 0.240** (3 de 19 nuevos), 3 nuevos falsos en 24
+    pares (0.125 por par), accuracy por par 0.667 (12 de 13 pares sin nuevo bien), 13/24 pares exactos,
+    preexistentes bien 1 de 9 (8 no detectados).
+  - barrido (`batch3_umbral_v3mix_force_hist03/`): mejor 0.80 (P 0.571 / R 0.210 / F1 0.308); 0.70-0.90
+    difieren en un solo daño. **Confirma 0.75** como zona estable de pocos falsos; el límite es M3, no
+    el umbral.
+  - Por tipo (umbral 0.30): golpes 3/3, fisura 1/1, **rayones 7/22**, faro roto 0/2. Contando cualquier
+    detección encima (intersección / área menor ≥ 0.5) solo 7 de 19 nuevos tienen una: no es un problema
+    de la métrica, M3 no ve rayones reales (pintura gastada, defensas peladas). Falsos notables (casi
+    todos absorbidos por la histéresis como preexistentes): `tire flat` sobre una rueda sana (p07),
+    `glass shatter` en una luneta con reflejos (p24), `crack` en un poste de luz (p13).
+  - Frente a `batch1` (P 0.875 / R 0.538 / F1 0.667): los daños agregados con IA eran más evidentes
+    que los reales.
+- **`batch_final` = los tres lotes juntos** (2026-11-09, `data/raw/own-data/batch_final/`): copias
+  renumeradas p01-p53 (`pNN_b1|b2|b3-<vista>_A|B`; p01-p11 de `batch1`, p12-p29 de `batch2`, p30-p53 de
+  `batch3`), anotaciones unidas desde los `instances_images.json` (con `dano_id`, sin p02 de `batch3`),
+  mapeo en `mapeo_lotes.csv`. La carpeta `final batch` del usuario tiene las mismas fotos con números de par
+  repetidos (y la B duplicada `.png` de `batch2`), por eso no se evalúa directamente. **53 pares: 32 nuevos,
+  15 preexistentes, 1 no visible.** Incluye el lote de calibración (`batch1`): es el resultado global, la
+  prueba independiente es `batch3`. Resultados con v3_mix, daños 0.75, histéresis 0.3, IoU 0.3
+  (`data/processed/eval/final_*`):
+  - sin forzar: `view_check` bloquea 9 de 53; P 0.429 / R 0.281 / F1 0.340.
+  - forzado: **P 0.455 / R 0.312 / F1 0.370**, 12 nuevos falsos (0.23 por par), accuracy por par 0.698
+    (TP 12, FP 6, FN 10, TN 25), 31/53 pares exactos, tipo correcto 14 de 15, preexistentes bien 4 de 15.
+  - barrido: 0.30 → P 0.239 / R 0.500 / F1 0.323 con 0.96 nuevos falsos por par; 0.55 → 0.309 / 0.406 /
+    0.351; 0.75 → 0.455 / 0.312 / 0.370; mejor 0.90 → 0.600 / 0.281 / 0.383. El F1 queda entre 0.32 y 0.38:
+    el umbral mueve el equilibrio, no el techo.
+  - recall de nuevos por clase (0.75 / 0.30): golpe 4/7 / 6/7, rayón 4/19 / 6/19, faro roto 1/3 / 1/3,
+    cristal roto 1/2 / 2/2, fisura 0/1 / 1/1.
+  - causas de los 22 nuevos perdidos a 0.75 (`final_diagnostico/diagnostico.md` y su script): 9 mal
+    localizados (detección encima, IoU < 0.3), 6 con confianza < 0.75 (aparecen a 0.30), 6 que M3 no ve ni a
+    0.30 (todos rayones), 1 que M4 empareja como preexistente. Ninguno por la asignación a partes; de los 10
+    aciertos, 9 tienen parte coherente (sin etiquetas de partes no se mide "parte equivocada").
+  - Decisión (2026-11-09): no reentrenar M3 antes de la entrega; resultados congelados para el documento
+    técnico (instrucción en `TTR/Document/instruccion_cierre_documento.md`, fuera del repo).
 - **Streamlit**: barra lateral "Modo" → "Evaluar un lote etiquetado" (`app/evaluation_page.py`,
   lógica sin Streamlit en `app/evaluation_view.py`): evalúa o abre una evaluación guardada,
   métricas, tabla por par y las imágenes con el GT en verde.
@@ -654,7 +706,7 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   fotos antes de cualquier inferencia y corre M1 → M2+M3 sobre A y B y luego M4.
   `PipelineSettings`: pasos de M1 (reflejos apagados, ver M1), validación de resolución,
   igualar el tamaño del par (activado),
-  umbrales de partes (0.7), daños (0.5), solapamiento (0.5), distancias de M4 (0.25 y 0.15) y
+  umbrales de partes (0.7), daños (0.75 desde el 2026-11-10; antes 0.5), solapamiento (0.5), distancias de M4 (0.25 y 0.15) y
   histéresis de M4 (0.3) y verificación de vista (40 puntos, solape 0.5). `PairResult` trae `comparison` (reporte de M4)
   y `change_map` (BGR, `None` si el par quedó bloqueado). `compare(result_a, result_b, settings,
   force)` repite solo M4, sin inferencia: lo usa el botón "Comparar de todos modos".
@@ -673,7 +725,13 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   **reescalada** a 4000×3000 (vale para memoria y tiempo, no para calidad de detección): mediana
   ~5 s por par (4.2-6.0 s, 4 corridas). **Pico de GPU 5.5 GB asignados y 6.5 GB reservados**: el
   margen frente a los 6 GB de RNF02 es mínimo, y las cifras de 4.07 y 2.72 GB de cada modelo por
-  separado no lo muestran.
+  separado no lo muestran. (Medición con `car_parts/v2`.)
+- **Medido el 2026-11-10 con `car_parts/v3_mix`** (mismo método: foto propia `TESTS/duster…/front.jpeg`
+  reescalada a 4000×3000 como A y B, una corrida de calentamiento y 4 medidas, umbral de daños 0.75):
+  **v3_mix mediana 3.01 s por par (2.88-3.03), pico 2.05 GB asignados / 2.81 GB reservados**; v2 en la misma
+  corrida 3.87 s (3.77-4.01), 5.42 / 6.42 GB (reproduce la medición anterior). Con v3_mix el par completo
+  cabe con holgura en los 6 GB de RNF02. Causa no verificada: probablemente v2 (29 clases) genera muchas más
+  detecciones de baja confianza y cada una pega su máscara a 12 MP antes del filtro.
 
 ## Checkpoints (`models/checkpoints/`, en `.gitignore`)
 - `car_parts/v1/` — Faster R-CNN, solo cajas, 20 épocas, sin augmentation. Checkpoint viejo:
@@ -710,7 +768,22 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
     partes detectadas 354 → 480 y preexistentes emparejados por parte 8 → 19 de 21 (el resto por
     imagen). v2 fallaba en las fotos propias (p. ej. `batch2/p14`, vista lateral: `back_glass` y
     `trunk` en A, solo `tire` en B); v3_mix encuentra puertas, salpicadera, cristales, espejo y
-    rueda. El umbral de partes 0.7 sigue **sin calibrar** para v3_mix.
+    rueda.
+  - **Umbral de partes** (2026-11-06, `v3_mix/umbral_partes/`: md, csv, json, `conteos.npz`, 4
+    figuras y los dos scripts, que viven ahí y no en el repo): P/R/F1 de partes con máscara a IoU
+    ≥ 0.5 contra el umbral 0.05-0.95, elegido en val (130 imgs) y confirmado en test (114). F1 casi
+    plano entre **0.65 y 0.90** (a < 0.01 del máximo en val); máximo en val 0.85 (F1 0.916 contra
+    0.910 en 0.70). En test, 0.85 − 0.70 = **−0.001 [−0.006, +0.003]**, no distinguible: 0.70 da
+    P 0.925 / R 0.870 / F1 0.896 (117 partes falsas, 215 perdidas), 0.85 P 0.942 / R 0.852 / F1
+    0.895 (86 / 244). Los mejores umbrales por clase (0.70-0.95) no se repiten en test.
+    **Se mantiene 0.70**: dentro de la meseta, y con un empate conviene el recall (una parte
+    perdida deja el daño sin parte; una falsa solo estorba si toca un daño).
+  - **Prueba externa en Carparts-Seg** (2026-11-06, `v3_mix/compare_10c/compare_10c_carparts_seg_test.md`,
+    268 imgs, solo light/bumper/hood/wheel/mirror/trunk, IC optimista, no elige modelo): v3_mix
+    caja 0.323 [0.279, 0.369], máscara 0.329 [0.284, 0.374]; v3_10c 0.246 / 0.250; v2 0.229 / 0.238.
+    v3_mix supera de forma distinguible a los dos (máscara +0.079 y +0.091): generaliza mejor a un
+    tercer dataset, sobre todo en bumper, hood y light. wheel (~0.09-0.15) sigue sin ser
+    interpretable (ruedas unidas en el GT).
 - `car_parts/v3_10c/` — misma receta, solo Roboflow train (327). 48 min (~143 s/época), pico
   2.23 GB. Val plano desde la época 4 (mejor, mask AP 0.449; la 20 da 0.448: empate): 98 de las
   130 imágenes de val son de HITL, que no vio. Test de Roboflow box AP 0.697, mask AP 0.683; HITL

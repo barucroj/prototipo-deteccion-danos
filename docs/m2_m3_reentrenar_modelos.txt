@@ -399,7 +399,30 @@ lista completa. Los flags mas importantes (identicos para todos):
    data/processed/eval/batch{1,2}_umbral_v3mix_force_hist03/): P/R/F1 y
    estados identicos a v2 en todos los umbrales, pero danos con parte
    asignada 25 -> 49 de 52 (umbral de danos 0.75) y preexistentes emparejados
-   por parte 8 -> 19 de 21. El umbral de partes (0.7) sigue sin calibrar.
+   por parte 8 -> 19 de 21.
+   Lote de prueba batch3 (2026-11-09, 24 pares reales, 19 nuevos y 9
+   preexistentes; detalle en AGENTS.md, "Evaluacion con pares A/B"): con
+   v3_mix, danos 0.75 y --force, P 0.500 / R 0.158 / F1 0.240 y 3 nuevos
+   falsos en 24 pares. El limite es M3 (damage/v2) con rayones reales: 7 de
+   22 detectados aun a 0.30. Mejorar M3 en rayones es el siguiente paso de
+   entrenamiento si hubiera tiempo.
 
-   Prueba externa pendiente (no elige modelo):
-       ./venv_cuda/Scripts/python.exe -m src.m2_parts.compare_10c --model v3_mix=models/checkpoints/car_parts/v3_mix/best_model.pth --model v3_10c=models/checkpoints/car_parts/v3_10c/best_model.pth --dataset carparts_seg --output models/checkpoints/car_parts/v3_mix/compare_10c
+   Umbral de partes (2026-11-06): se mantiene 0.70. Barrido 0.05-0.95 de
+   P/R/F1 de partes (mascara, IoU >= 0.5), elegido en val y confirmado en
+   test, en models/checkpoints/car_parts/v3_mix/umbral_partes/ (resumen md,
+   csv, json, conteos.npz, figuras/ y los scripts sweep_part_threshold.py y
+   plot_part_threshold.py, que se corren desde la raiz del proyecto):
+       ./venv_cuda/Scripts/python.exe models/checkpoints/car_parts/v3_mix/umbral_partes/sweep_part_threshold.py
+       ./venv_cuda/Scripts/python.exe models/checkpoints/car_parts/v3_mix/umbral_partes/plot_part_threshold.py
+   F1 casi plano entre 0.65 y 0.90; maximo en val 0.85 (0.916 contra 0.910
+   en 0.70); en test 0.85 - 0.70 = -0.001 [-0.006, +0.003], no
+   distinguible. 0.70 en test: P 0.925, R 0.870, F1 0.896. Con un empate se
+   prefiere el recall: una parte perdida deja el dano sin parte.
+
+   Prueba externa en Carparts-Seg (2026-11-06; no elige modelo, IC optimista):
+       ./venv_cuda/Scripts/python.exe -m src.m2_parts.compare_10c --model v3_mix=models/checkpoints/car_parts/v3_mix/best_model.pth --model v3_10c=models/checkpoints/car_parts/v3_10c/best_model.pth --model v2=models/checkpoints/car_parts/v2/best_model.pth --dataset carparts_seg --output models/checkpoints/car_parts/v3_mix/compare_10c
+   268 imagenes, light/bumper/hood/wheel/mirror/trunk. Caja / mascara:
+   v3_mix 0.323 / 0.329, v3_10c 0.246 / 0.250, v2 0.229 / 0.238. v3_mix
+   supera a los dos de forma distinguible (mascara +0.079 [+0.052, +0.104]
+   contra v3_10c), sobre todo en bumper, hood y light. wheel no es
+   interpretable (ruedas unidas en el GT).
