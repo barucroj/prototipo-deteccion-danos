@@ -542,8 +542,8 @@ Sin duplicados exactos entre splits; 2 casi-duplicados (misma foto con otra edic
 `crack` es 39 % objetos pequeños (<32² px), lo que explica su AP bajo en v1.
 
 ### Pendiente
-- **M4**: el umbral de daños 0.75 quedó confirmado con `batch3` (2026-11-09), pero
-  `DEFAULT_DAMAGE_THRESHOLD` sigue en 0.5 en el código (cambiarlo es decisión pendiente). Calibrar las
+- **M4**: el umbral de daños 0.75 quedó confirmado con `batch3` (2026-11-09) y desde el 2026-11-10 es el
+  default (`DEFAULT_DAMAGE_THRESHOLD = 0.75`, también en el deslizador de Streamlit). Calibrar las
   distancias con pares que tengan preexistentes (`batch2`, `batch3`) y recalibrar `view_check` con pares
   reales (bloqueó 5 de 24 en `batch3`). Ver "Evaluación con pares A/B".
 - **M2**: umbral de partes 0.7 (`DEFAULT_PART_THRESHOLD`) **medido para v3_mix** el 2026-11-06 (ver
@@ -644,7 +644,8 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   (`batch1_umbral/`): **0.75 → P 0.889, R 0.615, F1 0.727, 1 falso, 6/11 exactos**; de 0.5 a 0.75
   se quitan 7 falsos sin perder aciertos; 0.80 ya pierde 2 (0.75 está al borde de la meseta
   0.60-0.75). Con IoU 0.5 el mejor sería 0.30. **Umbral de calibración**: 13 daños del mismo lote;
-  `DEFAULT_DAMAGE_THRESHOLD` sigue en 0.5 hasta confirmarlo con un lote de prueba.
+  `DEFAULT_DAMAGE_THRESHOLD` quedó en 0.5 hasta confirmarlo con un lote de prueba (`batch3`, 2026-11-09);
+  desde el 2026-11-10 es 0.75.
 - **`batch3` = lote de prueba** (2026-11-09, `data/raw/own-data/batch3/`): fotos reales de 7 coches
   (Jetta, Tiida, Accent, Infiniti, Focus, Sentra, Jeep). Cada par es una foto original y una versión
   editada con IA: `-a` (daño borrado → A; la original es B) o `-b` (foto "después", no necesariamente con
@@ -705,7 +706,7 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   fotos antes de cualquier inferencia y corre M1 → M2+M3 sobre A y B y luego M4.
   `PipelineSettings`: pasos de M1 (reflejos apagados, ver M1), validación de resolución,
   igualar el tamaño del par (activado),
-  umbrales de partes (0.7), daños (0.5), solapamiento (0.5), distancias de M4 (0.25 y 0.15) y
+  umbrales de partes (0.7), daños (0.75 desde el 2026-11-10; antes 0.5), solapamiento (0.5), distancias de M4 (0.25 y 0.15) y
   histéresis de M4 (0.3) y verificación de vista (40 puntos, solape 0.5). `PairResult` trae `comparison` (reporte de M4)
   y `change_map` (BGR, `None` si el par quedó bloqueado). `compare(result_a, result_b, settings,
   force)` repite solo M4, sin inferencia: lo usa el botón "Comparar de todos modos".
@@ -724,7 +725,13 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   **reescalada** a 4000×3000 (vale para memoria y tiempo, no para calidad de detección): mediana
   ~5 s por par (4.2-6.0 s, 4 corridas). **Pico de GPU 5.5 GB asignados y 6.5 GB reservados**: el
   margen frente a los 6 GB de RNF02 es mínimo, y las cifras de 4.07 y 2.72 GB de cada modelo por
-  separado no lo muestran.
+  separado no lo muestran. (Medición con `car_parts/v2`.)
+- **Medido el 2026-11-10 con `car_parts/v3_mix`** (mismo método: foto propia `TESTS/duster…/front.jpeg`
+  reescalada a 4000×3000 como A y B, una corrida de calentamiento y 4 medidas, umbral de daños 0.75):
+  **v3_mix mediana 3.01 s por par (2.88-3.03), pico 2.05 GB asignados / 2.81 GB reservados**; v2 en la misma
+  corrida 3.87 s (3.77-4.01), 5.42 / 6.42 GB (reproduce la medición anterior). Con v3_mix el par completo
+  cabe con holgura en los 6 GB de RNF02. Causa no verificada: probablemente v2 (29 clases) genera muchas más
+  detecciones de baja confianza y cada una pega su máscara a 12 MP antes del filtro.
 
 ## Checkpoints (`models/checkpoints/`, en `.gitignore`)
 - `car_parts/v1/` — Faster R-CNN, solo cajas, 20 épocas, sin augmentation. Checkpoint viejo:
