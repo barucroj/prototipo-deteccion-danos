@@ -24,6 +24,7 @@ from src.app.view import comparison_rows, damage_rows, part_rows, to_display  # 
 from src.detection_common.visualize import draw_detections  # noqa: E402
 from src.m1_preprocessing.pipeline import PreprocessConfig  # noqa: E402
 from src.m1_preprocessing.validation import ImageValidationError  # noqa: E402
+from src.m3_damage.assignment.analyze import DEFAULT_DAMAGE_THRESHOLD  # noqa: E402
 from src.m3_damage.assignment.merge import DEFAULT_MERGE_CONTAINMENT, DEFAULT_MERGE_IOU, MergeSettings  # noqa: E402
 from src.m3_damage.assignment.render import draw_analysis  # noqa: E402
 from src.m4_comparison.damages import DEFAULT_HYSTERESIS_THRESHOLD  # noqa: E402
@@ -65,7 +66,7 @@ def sidebar() -> PipelineSettings:
 
     st.sidebar.subheader("M2 / M3. Detección")
     part_threshold = st.sidebar.slider("Umbral de confianza de partes", 0.05, 0.95, 0.70, 0.05)
-    damage_threshold = st.sidebar.slider("Umbral de confianza de daños", 0.05, 0.95, 0.50, 0.05)
+    damage_threshold = st.sidebar.slider("Umbral de confianza de daños", 0.05, 0.95, DEFAULT_DAMAGE_THRESHOLD, 0.05)
     min_overlap = st.sidebar.slider(
         "Solapamiento mínimo daño→parte", 0.05, 0.95, 0.50, 0.05,
         help="Fracción del daño que debe caer dentro de una parte para asignársela.")

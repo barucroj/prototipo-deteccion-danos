@@ -27,8 +27,9 @@ from src.m3_damage.assignment.merge import NO_MERGE, MergeSettings, merge_detect
 
 #: Minimum confidence for a part instance to take part in the assignment.
 DEFAULT_PART_THRESHOLD = 0.7
-#: Minimum confidence for a damage to be reported.
-DEFAULT_DAMAGE_THRESHOLD = 0.5
+#: Minimum confidence for a damage to be reported. 0.75 was chosen on batch1 and confirmed on the
+#: batch3 test pairs (2026-11-09); the detector evaluations use their own thresholds.
+DEFAULT_DAMAGE_THRESHOLD = 0.75
 
 
 @dataclass
