@@ -14,7 +14,7 @@ menciona siamesas: solo tenía una descripción genérica ("detectar tallones y 
 ## Arquitectura vigente (decidida 2026-09-29): 4 módulos + orquestador + interfaz
 
 1. **M1. Preprocesamiento óptico** (`src/m1_preprocessing/`)
-   - Recibe el par A/B en JPG/PNG. Valida formato y resolución mínima 1920×1080, corrige
+   - Recibe el par A/B en JPG/PNG. Valida formato y tamaño mínimo (lado menor ≥ 800 px), corrige
      orientación EXIF, reduce reflejos especulares (`specular_removal.py`), aplica CLAHE de
      forma **opcional** y devuelve metadatos (tamaño original, transformaciones aplicadas).
    - **NO redimensiona a 512×512 ni normaliza con media/desviación de ImageNet.** Los R-CNN de
@@ -211,7 +211,10 @@ Las rutas en notebooks se resuelven relativas a la raíz del proyecto, no hardco
   `python -m src.m1_preprocessing.specular_removal <input_dir> <output_dir> [-n N]`. Probado en
   `tests/m1_preprocessing/test_specular_removal.py`.
 - `validation.py` — `validate_image()`: JPG/PNG decidido por contenido, no por extensión;
-  resolución mínima 1920×1080 sin importar la orientación (lado largo ≥ 1920, corto ≥ 1080).
+  tamaño mínimo: lado menor ≥ 800 px sin importar la orientación (`MIN_SHORT_SIDE`; desde el
+  2026-11-10, antes 1920×1080). 800 es el lado menor al que los R-CNN de torchvision reducen
+  toda imagen; con 1920×1080 casi la mitad de las fotos propias (las editadas con IA miden
+  896×1195) se rechazaba y las evaluaciones se corrían con `--no-validate`.
   `ImageValidationError.code` ∈ `no_encontrado`, `ilegible`, `formato`, `resolucion`; el
   mensaje está en español para el usuario.
 - `pipeline.py` — `load_image()` (BGR derecho según EXIF), `preprocess_image()` (reflejos →
@@ -579,6 +582,10 @@ Lógica determinista sobre los reportes JSON de M3 (`partes` con `id`/`clase_par
     12 → 8 en 0.75 y p14 deja de marcar su golpe preexistente como nuevo (preexistentes bien
     clasificados 2 → 3 de 6). Los 8 falsos restantes son daños que M3 ve solo en B (rayones por
     reflejos, sobre todo), que la histéresis no puede corregir. Umbral bajo **sin calibrar**.
+    Barrido 2026-11-11 en `batch_final` (forzado, daños 0.75, IoU 0.3;
+    `data/processed/eval/final_histeresis/`): F1 de nuevos sin histéresis 0.323, 0.20-0.35 → 0.370 (FP 20 → 12,
+    sin perder aciertos), 0.05 → 0.375 (pierde un acierto). En calibración (p01-p29) el mejor es 0.20-0.35;
+    **se mantiene 0.3**. La histéresis no influye en forzar: eso lo decide `view_check`.
 - `report.py` — `build_report()` arma el `ReporteComparacion` de la sección 4.9.2 (`imagen_a`,
   `imagen_b`, `umbral_distancia`, `resumen`, `danos`, `mapa_cambios`), más lo que piden RF09 y
   RNF05 y el diseño no traía: `umbral_distancia_partes`, `modelos` y, por daño, `confianza`,
@@ -613,6 +620,14 @@ originales.
 M1→M4 sobre un par, sin GUI: `analyze_pair.py A.jpg B.jpg -o salida/ [--no-validate] [--force]`. Escribe
 los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte_par.json` y
 `mapa_cambios.png`.
+
+## `scripts/diagnostic_maps.py`
+Todo el sistema (M1→M4, siempre forzado) sobre una carpeta de pares y **una imagen por par**:
+`diagnostic_maps.py <lote> -o salida/ [--damage-threshold 0.75] [--iou 0.3] [--validate]`. Encabezado con
+la verificación de vista (en rojo si se forzó), conteos del sistema y, con etiquetas, conteos reales, cada daño
+real con su estado predicho e IoU y los nuevos falsos; panel A con las detecciones de M3 y panel B con el mapa
+de cambios, GT en verde. Sin anotaciones busca `*_A`/`*_B`. Salida de `batch_final`:
+`data/processed/eval/final_diagnostico/imagenes/`.
 
 ## Evaluación con pares A/B (`src/evaluation/`, 2026-11-03)
 - **Lote**: `<lote>/images/pNN_<coche>-<vista>_A|B.jpg` y `<lote>/annotations/instances_images.json`
@@ -717,6 +732,14 @@ los reportes de M3 (`A.json`, `B.json`), imágenes anotadas, máscaras, `reporte
   imagen (vista daños+parte / todas las partes / todos los daños, tabla de daños, partes y
   metadatos de M1), pestaña de M4 primero (conteos por estado, mapa de cambios, tabla por daño y
   descarga del PNG) y descarga del JSON del par.
+- `app/streamlit_app_v2.py` — interfaz nueva de dos páginas (2026-11-11; la anterior se conserva):
+  **Análisis** (carga de A y B, veredicto, A y B lado a lado con los daños dibujados sobre B, pestañas
+  Resultado / Solo daños / Solo partes / Detalle por daño / JSON) y **Ajustes** (cada parámetro con la
+  explicación de su efecto, umbral de preexistentes = histéresis editable, qué estados se dibujan sobre B:
+  nuevos por defecto). Tema claro:
+  `python -m streamlit run src/app/streamlit_app_v2.py --theme.base light --theme.primaryColor "#6C1D45"
+  --theme.backgroundColor "#FAF9F6" --theme.secondaryBackgroundColor "#F1EFEA" --theme.textColor "#1F2328"`.
+  Renderizada con `AppTest`, sin pruebas automáticas propias.
 - `app/view.py` — tablas, nombres en español de las clases de CarDD y estados de M4, y reducción de la
   imagen para mostrarla (lado largo ≤ 1600); sin Streamlit ni torch, probado en `tests/app/`.
 - Medido el 2026-10-16 (RTX 3050) con fotos propias de 1600×1200 (hay que desactivar la
