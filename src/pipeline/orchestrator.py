@@ -39,7 +39,7 @@ class PipelineSettings:
     Args:
         preprocess: Optical steps of M1. The current checkpoints were trained
             on raw images, so highlight removal is off by default here.
-        validate: Enforce the protocol's minimum resolution (1920x1080).
+        validate: Enforce the minimum image size (short side of 800 px).
         equalize_size: Reduce the larger photo of the pair to the long side of
             the other (M1, :mod:`src.m1_preprocessing.pair_size`); on by default.
         merge: Merging of same-type damages in the same region (M3); on by default.

@@ -5,7 +5,7 @@ una renta — y reporta los daños nuevos que aparecen en B.
 
 ## Arquitectura
 1. **M1. Preprocesamiento óptico** (`src/m1_preprocessing/`): valida formato y resolución
-   (mín. 1920×1080), corrige orientación EXIF, reduce reflejos, CLAHE opcional y devuelve
+   (lado menor ≥ 800 px), corrige orientación EXIF, reduce reflejos, CLAHE opcional y devuelve
    metadatos. No redimensiona ni normaliza: eso lo hacen los detectores.
 2. **M2. Segmentación de partes** (`src/m2_parts/`): Mask R-CNN sobre Roboflow
    Car-Parts (47 clases). Devuelve `{clase_parte, confianza, bbox, máscara}` por parte.

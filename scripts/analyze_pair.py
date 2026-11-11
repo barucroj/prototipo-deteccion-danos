@@ -5,7 +5,7 @@
 Writes in ``--output``: the M3 report of each image (``A.json``, ``B.json``),
 their annotated images and damage masks, the M4 report (``reporte_par.json``)
 and the change map (``mapa_cambios.png``). ``--no-validate`` lets through photos
-below 1920x1080. A pair that fails the view check gets no classification and no
+with a short side under 800 px. A pair that fails the view check gets no classification and no
 change map unless ``--force`` is passed, which the report records.
 """
 
@@ -33,7 +33,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("image_a", help="before the rental")
     parser.add_argument("image_b", help="after the rental")
     parser.add_argument("-o", "--output", required=True)
-    parser.add_argument("--no-validate", action="store_true", help="do not enforce 1920x1080")
+    parser.add_argument("--no-validate", action="store_true", help="do not enforce the minimum size (short side 800 px)")
     parser.add_argument("--force", action="store_true", help="compare even if the view check fails")
     parser.add_argument("--parts-checkpoint", default=DEFAULT_PARTS_CHECKPOINT)
     parser.add_argument("--damage-checkpoint", default=DEFAULT_DAMAGE_CHECKPOINT)

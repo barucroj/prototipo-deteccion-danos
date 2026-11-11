@@ -4,11 +4,15 @@ Checked before anything is processed, so a bad file is reported to the user
 instead of failing somewhere inside a detector:
 
 * the file is a real JPG or PNG — decided from its content, not its extension;
-* it has at least the protocol's resolution, 1920x1080.
+* its short side is at least 800 px.
 
-The resolution rule is orientation-free: the long side must reach 1920 and the
-short side 1080, so a portrait 1080x1920 photo passes like a landscape one and
-the result does not depend on whether the EXIF rotation was applied yet.
+The minimum follows the detectors, not the camera: the Mask R-CNN models of
+torchvision rescale every image to a short side of 800 px, so a smaller photo
+would only be upsampled, while anything above it loses nothing. A fixed
+1920x1080 rejected most AI-edited and messaging-app photos (e.g. 896x1195)
+without any benefit. The rule is orientation-free (only the short side counts),
+so a portrait photo passes like a landscape one and the result does not depend
+on whether the EXIF rotation was applied yet.
 
 This is the system's entry check, on purpose kept out of
 :func:`src.m1_preprocessing.pipeline.preprocess_image`: the training datasets
@@ -24,8 +28,8 @@ from PIL import Image, UnidentifiedImageError
 
 #: Pillow format name -> the name shown to the user.
 ALLOWED_FORMATS = {"JPEG": "JPG", "PNG": "PNG"}
-MIN_LONG_SIDE = 1920
-MIN_SHORT_SIDE = 1080
+#: Minimum short side in pixels: the short side the detectors resize to.
+MIN_SHORT_SIDE = 800
 
 _EXIF_ORIENTATION_TAG = 0x0112
 
@@ -91,18 +95,16 @@ def inspect_image(path: str) -> ImageInfo:
                      exif_orientation=orientation)
 
 
-def validate_image(path: str, min_long_side: int = MIN_LONG_SIDE,
-                   min_short_side: int = MIN_SHORT_SIDE) -> ImageInfo:
-    """:func:`inspect_image` plus the minimum-resolution check.
+def validate_image(path: str, min_short_side: int = MIN_SHORT_SIDE) -> ImageInfo:
+    """:func:`inspect_image` plus the minimum-size check (short side).
 
     Raises:
         ImageValidationError: with ``code`` set to the first rule that failed.
     """
     info = inspect_image(path)
-    long_side, short_side = max(info.width, info.height), min(info.width, info.height)
-    if long_side < min_long_side or short_side < min_short_side:
+    if min(info.width, info.height) < min_short_side:
         raise ImageValidationError(
             "resolucion",
-            f"{os.path.basename(path)}: resolución {info.width}×{info.height} insuficiente; "
-            f"el mínimo es {min_long_side}×{min_short_side} píxeles.")
+            f"{os.path.basename(path)}: tamaño {info.width}×{info.height} insuficiente; "
+            f"el lado menor debe medir al menos {min_short_side} píxeles.")
     return info

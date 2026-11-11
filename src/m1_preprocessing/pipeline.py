@@ -33,8 +33,8 @@ from PIL import Image, ImageOps
 from src.m1_preprocessing.normalization import apply_clahe_rgb
 from src.m1_preprocessing.pair_size import limit_long_side
 from src.m1_preprocessing.specular_removal import ShenParams, remove_specular_highlights
-from src.m1_preprocessing.validation import (MIN_LONG_SIDE, MIN_SHORT_SIDE, ImageInfo,
-                                             inspect_image, validate_image)
+from src.m1_preprocessing.validation import (MIN_SHORT_SIDE, ImageInfo, inspect_image,
+                                             validate_image)
 
 
 @dataclass(frozen=True)
@@ -118,7 +118,6 @@ def preprocess_image(image_bgr: np.ndarray,
 
 
 def preprocess_file(path: str, config: Optional[PreprocessConfig] = None, validate: bool = True,
-                    min_long_side: int = MIN_LONG_SIDE,
                     min_short_side: int = MIN_SHORT_SIDE,
                     max_long_side: Optional[int] = None) -> PreprocessResult:
     """M1 end to end for one photo file.
@@ -126,8 +125,9 @@ def preprocess_file(path: str, config: Optional[PreprocessConfig] = None, valida
     Args:
         path: JPG or PNG file.
         config: Optical steps to run; defaults to :class:`PreprocessConfig`.
-        validate: Enforce the minimum resolution. The format is always
-            checked. Turn off only for dataset images, which are smaller.
+        validate: Enforce the minimum size (short side of ``min_short_side``
+            pixels). The format is always checked. Turn off only for
+            dataset images, which are smaller.
         max_long_side: Reduce the upright image to this long side before the
             optical steps (step ``igualar_tamano_par``); ``None`` keeps it.
             The orchestrator sets it to equalize A and B.
@@ -149,7 +149,7 @@ def preprocess_file(path: str, config: Optional[PreprocessConfig] = None, valida
         ImageValidationError: when the file fails a check.
     """
     if validate:
-        validate_image(path, min_long_side, min_short_side)
+        validate_image(path, min_short_side)
     image, info = load_image(path)
 
     steps: List[dict] = []

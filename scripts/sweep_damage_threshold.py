@@ -43,7 +43,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="damage confidence thresholds (default 0.30 to 0.95 every 0.05)")
     parser.add_argument("--iou", type=float, nargs="+", default=[DEFAULT_MIN_IOU, 0.5],
                         help="IoU thresholds to count a damage as detected; the first is the main one")
-    parser.add_argument("--no-validate", action="store_true", help="do not enforce 1920x1080")
+    parser.add_argument("--no-validate", action="store_true", help="do not enforce the minimum size (short side 800 px)")
     parser.add_argument("--force", action="store_true", help="compare even if the view check fails")
     parser.add_argument("--parts-checkpoint", default=DEFAULT_PARTS_CHECKPOINT)
     parser.add_argument("--damage-checkpoint", default=DEFAULT_DAMAGE_CHECKPOINT)

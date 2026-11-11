@@ -55,7 +55,9 @@ def save_upload(upload, folder: str) -> str:
 def sidebar() -> PipelineSettings:
     st.sidebar.header("Configuración")
     st.sidebar.subheader("M1. Preprocesamiento")
-    validate = st.sidebar.checkbox("Exigir resolución mínima 1920×1080", value=True)
+    validate = st.sidebar.checkbox(
+        "Exigir tamaño mínimo (lado menor de 800 px)", value=True,
+        help="Los detectores reducen toda imagen a un lado menor de 800 px; una foto más chica se tendría que ampliar.")
     equalize_size = st.sidebar.checkbox(
         "Igualar el tamaño de A y B", value=True,
         help="Reduce la foto más grande al lado largo de la otra; la más chica nunca se agranda.")
